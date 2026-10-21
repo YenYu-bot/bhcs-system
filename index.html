@@ -3208,7 +3208,19 @@ window.confirmDelete= async function() {
     const t = teachers.find(x => x._id === targetId);
     await deleteDoc(doc(db,'teachers',targetId));
     if (t?.userId) await deleteDoc(doc(db,'logins',t.userId)).catch(()=>{});
-    teachers=teachers.filter(t=>t._id!==targetId); renderTeachers(); showToast('🗑 帳號已刪除');
+    // 同步取消這位老師在電訪名冊上的所有配對
+    let cleared = 0;
+    if (t?.userId) {
+      const snap = await getDocs(query(collection(db,'ctStudents'), where('teacherIds','array-contains',t.userId)));
+      for (const d of snap.docs) {
+        const s = d.data();
+        const ct = { ...(s.classTeachers||{}) };
+        Object.keys(ct).forEach(c => { if (ct[c] === t.userId) delete ct[c]; });
+        await updateDoc(doc(db,'ctStudents',d.id), { teacherIds:(s.teacherIds||[]).filter(x => x !== t.userId), classTeachers:ct, updatedAt:Date.now() });
+        cleared++;
+      }
+    }
+    teachers=teachers.filter(t=>t._id!==targetId); renderTeachers(); showToast(`🗑 帳號已刪除${cleared?`，已取消 ${cleared} 位學生的配對`:''}`);
   }
   catch(e) { console.error(e); showToast('❌ 刪除失敗：'+e.message,'error'); }
   hideLoading(); deleteTargetId=null;
@@ -5298,7 +5310,13 @@ window.ctSaveStudent = async function() {
   const data = { name, english:g('ctsEnglish').value.trim(), phones, sourceClasses, updatedAt:Date.now() };
   showLoading('儲存中...');
   try {
-    if (id) { await updateDoc(doc(db,'ctStudents',id), data); }
+    if (id) {
+      const cur = ctStudents.find(x => x._id === id);
+      const ct = { ...(cur?.classTeachers||{}) };
+      Object.keys(ct).forEach(c => { if (!sourceClasses.includes(c)) delete ct[c]; });
+      data.classTeachers = ct;
+      await updateDoc(doc(db,'ctStudents',id), data);
+    }
     else    { await addDoc(collection(db,'ctStudents'), { ...data, teacherIds:[], active:true, createdAt:Date.now() }); }
     showToast('✅ 已儲存'); ctCloseStudentModal();
     await ctAdminLoad(); ctRenderPairs();
@@ -5438,30 +5456,72 @@ window.ctRenderImportPreview = function() {
       </tbody></table>
     </div>`).join('');
 };
+// 學生的 classTeachers = { 班別: 老師id }，記錄「哪個班帶來哪位老師」的配對，
+// 讓「以新表為準」移除班別時知道該取消哪位老師（老師若還教該生其他班則保留）。
+function ctDropClass(s, className) {
+  const ct = { ...(s.classTeachers||{}) };
+  const tid = ct[className];
+  delete ct[className];
+  const sourceClasses = (s.sourceClasses||[]).filter(c => c !== className);
+  let teacherIds = s.teacherIds || [];
+  if (tid && !Object.values(ct).includes(tid)) teacherIds = teacherIds.filter(x => x !== tid);
+  const patch = { sourceClasses, classTeachers:ct, teacherIds, updatedAt:Date.now() };
+  if (!sourceClasses.length) patch.active = false;
+  return patch;
+}
 window.ctRunImport = async function() {
-  const todo = ctImportPages.flatMap(p => p.students.filter(s => s.include && s.name).map(s => ({ ...s, className:p.className, teacherId:p.teacherId })));
-  if (!todo.length) { showToast('沒有勾選任何學生','error'); return; }
+  const replace = document.getElementById('ctImportReplace').checked;
+  const pages = ctImportPages.map(p => ({ ...p, students:p.students.filter(s => s.include && s.name) })).filter(p => p.students.length);
+  if (!pages.length) { showToast('沒有勾選任何學生','error'); return; }
+  if (replace && pages.some(p => !p.className)) { showToast('「以新表為準」需要每張表都有班別','error'); return; }
+  if (replace && !confirm(`以新表為準：${pages.map(p => p.className).join('、')}\n不在表上的學生會被移除該班別與該班老師的配對，沒有任何班別的學生會停用。確定？`)) return;
   showLoading('匯入名冊...');
-  let created = 0, merged = 0;
+  let created = 0, merged = 0, dropped = 0;
   try {
-    for (const s of todo) {
-      const ex = ctFindExisting(s.name, s.phones);
-      if (ex.match) {
-        const m = ex.match;
-        const phones = [...new Set([...(m.phones||[]), ...s.phones])];
-        const sourceClasses = [...new Set([...(m.sourceClasses||[]), ...(s.className?[s.className]:[])])];
-        const teacherIds = [...new Set([...(m.teacherIds||[]), ...(s.teacherId?[s.teacherId]:[])])];
-        const patch = { phones, sourceClasses, teacherIds, updatedAt:Date.now() };
-        if (s.english && !m.english) patch.english = s.english;
-        await updateDoc(doc(db,'ctStudents',m._id), patch);
-        Object.assign(m, patch); merged++;
-      } else {
-        const data = { name:s.name, english:s.english||'', phones:s.phones, sourceClasses:s.className?[s.className]:[], teacherIds:s.teacherId?[s.teacherId]:[], active:true, createdAt:Date.now(), updatedAt:Date.now() };
-        const ref = await addDoc(collection(db,'ctStudents'), data);
-        ctStudents.push({ _id:ref.id, ...data }); created++;
+    for (const p of pages) {
+      const C = p.className, T = p.teacherId;
+      const onPage = new Set();
+      for (const s of p.students) {
+        const ex = ctFindExisting(s.name, s.phones);
+        if (ex.match) {
+          const m = ex.match;
+          const ct = { ...(m.classTeachers||{}) };
+          let teacherIds = [...(m.teacherIds||[])];
+          if (C && T) {
+            const oldT = ct[C];
+            ct[C] = T;
+            // 以新表為準：這個班換老師 → 舊老師若沒教該生其他班就取消
+            if (replace && oldT && oldT !== T && !Object.values(ct).includes(oldT)) teacherIds = teacherIds.filter(x => x !== oldT);
+          }
+          if (T) teacherIds = [...new Set([...teacherIds, T])];
+          const patch = {
+            phones: [...new Set([...(m.phones||[]), ...s.phones])],
+            sourceClasses: [...new Set([...(m.sourceClasses||[]), ...(C?[C]:[])])],
+            teacherIds, classTeachers:ct, active:true, updatedAt:Date.now()
+          };
+          if (s.english && !m.english) patch.english = s.english;
+          await updateDoc(doc(db,'ctStudents',m._id), patch);
+          Object.assign(m, patch); merged++; onPage.add(m._id);
+        } else {
+          const data = { name:s.name, english:s.english||'', phones:s.phones, sourceClasses:C?[C]:[], teacherIds:T?[T]:[],
+                         classTeachers:(C&&T)?{[C]:T}:{}, active:true, createdAt:Date.now(), updatedAt:Date.now() };
+          const ref = await addDoc(collection(db,'ctStudents'), data);
+          const ns = { _id:ref.id, ...data };
+          ctStudents.push(ns); created++; onPage.add(ns._id);
+        }
+      }
+      if (replace && C) {
+        // 原本在這個班、新表上沒有的學生
+        for (const s of ctStudents.filter(x => (x.sourceClasses||[]).includes(C) && !onPage.has(x._id))) {
+          // 舊資料沒有 classTeachers 時，以這張表的老師當作該班老師
+          if (!(s.classTeachers||{})[C] && T) s.classTeachers = { ...(s.classTeachers||{}), [C]:T };
+          const patch = ctDropClass(s, C);
+          await updateDoc(doc(db,'ctStudents',s._id), patch);
+          Object.assign(s, patch); dropped++;
+        }
       }
     }
-    showToast(`✅ 匯入完成：新增 ${created}、合併 ${merged}`);
+    showToast(`✅ 匯入完成：新增 ${created}、合併 ${merged}${replace?`、移除班別 ${dropped}`:''}`);
     ctImportPages = [];
     await ctAdminLoad();
     ctAdminSwitch('pairs');
@@ -5674,6 +5734,10 @@ window.ctRunImport = async function() {
             同名且電話相同的學生會合併到既有資料（累加班別與配對），不會重複建立。
           </div>
           <input type="file" id="ctImportFile" accept="application/pdf,.pdf" multiple onchange="ctImportFiles(this.files)" style="font-size:13px;color:var(--text)">
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;margin-top:12px;padding:10px 12px;background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.25);border-radius:10px">
+            <input type="checkbox" id="ctImportReplace" style="accent-color:var(--purple);width:16px;height:16px;margin-top:2px;flex-shrink:0">
+            <span><b>以新表為準</b><span style="color:var(--muted)">　把每張點名表當成該班的完整名單：原本在這個班但新表上沒有的學生，會被移除該班別與該班老師的配對；班別被移光的學生自動停用。不勾則只新增、不移除。</span></span>
+          </label>
           <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
             <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">或貼上文字（每行：姓名 電話 電話）</div>
             <input class="field-input" id="ctImportTextClass" placeholder="班別（選填）" style="margin-bottom:8px">
