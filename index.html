@@ -311,7 +311,10 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
           <div id="ctTeacherSummary" style="font-size:13px;color:var(--muted)"></div>
         </div>
         <div style="font-size:12px;color:var(--muted);margin:8px 0 10px;line-height:1.6">列出配對給你的學生。手機上點電話號碼可直接撥號；每位學生每月至少電訪一次，未填會標紅。</div>
-        <input class="field-input" id="ctSearch" placeholder="搜尋學生姓名或班別" oninput="ctRenderTeacherList()">
+        <div style="display:flex;gap:8px">
+          <input class="field-input" id="ctSearch" placeholder="搜尋學生姓名或班別" oninput="ctRenderTeacherList()" style="flex:1">
+          <button class="btn btn-teal btn-sm" style="white-space:nowrap" onclick="ctOpenStudentModal()">＋ 新增學生</button>
+        </div>
       </div>
       <div id="ctTeacherList"></div>
       <div class="card" style="margin-top:16px">
@@ -5067,7 +5070,11 @@ function ctStudentCard(s, from, to, showClasses) {
         <div style="font-size:12px;margin-top:5px">${ctPhoneLinks(s.phones)}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:3px">最近電訪：${last ? esc(last.date)+'　'+esc(CT_METHODS[last.method]||'') : '尚無'}　共 ${mine.length} 筆</div>
       </div>
-      <button class="btn btn-teal btn-sm" onclick="event.stopPropagation();ctOpenForm('${s._id}')">＋ 新增電訪</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-ghost btn-sm" title="編輯學生資料" onclick="event.stopPropagation();ctOpenStudentModal('${s._id}')">✏️</button>
+        <button class="btn btn-ghost btn-sm" title="從我的名單移除" style="color:var(--red)" onclick="event.stopPropagation();ctRemoveMyStudent('${s._id}')">🗑</button>
+        <button class="btn btn-teal btn-sm" onclick="event.stopPropagation();ctOpenForm('${s._id}')">＋ 新增電訪</button>
+      </div>
     </div>
     ${open ? ctHistoryHtml(mine, true, false) : ''}
   </div>`;
@@ -5316,19 +5323,42 @@ window.ctSaveStudent = async function() {
   const phones = []; ctExtractPhones(g('ctsPhones').value, phones);
   const sourceClasses = g('ctsClasses').value.split(/[\s,，、]+/).map(x => x.trim()).filter(Boolean);
   const data = { name, english:g('ctsEnglish').value.trim(), phones, sourceClasses, updatedAt:Date.now() };
+  const isAdmin = !!currentUser?.isAdmin;
   showLoading('儲存中...');
   try {
     if (id) {
       const cur = ctStudents.find(x => x._id === id);
       const ct = { ...(cur?.classTeachers||{}) };
       Object.keys(ct).forEach(c => { if (!sourceClasses.includes(c)) delete ct[c]; });
+      // 老師新增的班別視為自己教的班（規則只允許老師把自己填進去）
+      if (!isAdmin) sourceClasses.forEach(c => { if (!ct[c]) ct[c] = currentUser.id; });
       data.classTeachers = ct;
       await updateDoc(doc(db,'ctStudents',id), data);
+    } else {
+      // 老師新增：直接配對給自己；主管新增：先不配對
+      const teacherIds = isAdmin ? [] : [currentUser.id];
+      const classTeachers = {};
+      if (!isAdmin) sourceClasses.forEach(c => classTeachers[c] = currentUser.id);
+      await addDoc(collection(db,'ctStudents'), { ...data, teacherIds, classTeachers, active:true, createdAt:Date.now() });
     }
-    else    { await addDoc(collection(db,'ctStudents'), { ...data, teacherIds:[], active:true, createdAt:Date.now() }); }
     showToast('✅ 已儲存'); ctCloseStudentModal();
-    await ctAdminLoad(); ctRenderPairs();
-  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+    await ctReload();
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+};
+
+// 老師：把學生從自己的名單移除（只取消自己的配對，資料與紀錄保留；主管仍看得到）
+window.ctRemoveMyStudent = async function(id) {
+  const s = ctStudents.find(x => x._id === id); if (!s) return;
+  if (!confirm(`將「${s.name}」從你的電訪名單移除？\n學生資料與你的電訪紀錄都會保留，之後主管可以重新配對。`)) return;
+  const teacherIds = (s.teacherIds||[]).filter(t => t !== currentUser.id);
+  const classTeachers = {};
+  Object.entries(s.classTeachers||{}).forEach(([c,t]) => { if (t !== currentUser.id) classTeachers[c] = t; });
+  const patch = { teacherIds, classTeachers, updatedAt:Date.now() };
+  if (!teacherIds.length) patch.active = false;
+  showLoading('移除中...');
+  try { await updateDoc(doc(db,'ctStudents',id), patch); showToast('已從你的名單移除'); await ctReload(); }
+  catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
   hideLoading();
 };
 window.ctToggleStudentActive = async function(id) {
@@ -5627,7 +5657,7 @@ window.ctRunImport = async function() {
 <div class="modal-overlay" id="ctStudentModal">
   <div class="modal">
     <div class="modal-title" id="ctsTitle">＋ 新增學生</div>
-    <div class="modal-sub">電訪名冊的學生資料（與教室日誌的班級名單無關）</div>
+    <div class="modal-sub">電訪名冊的學生資料（與教室日誌的班級名單無關）。老師新增的學生會自動配對給自己。</div>
     <input type="hidden" id="ctsId">
     <div class="field-row">
       <div><label class="field-label">中文姓名</label><input class="field-input" id="ctsName"></div>

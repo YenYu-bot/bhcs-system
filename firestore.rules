@@ -25,10 +25,35 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 電訪學生名冊（含家長電話）：老師只能讀「配對給自己」的學生；只有主管能改
+    // 電訪學生名冊（含家長電話）
+    //   讀：主管全部；老師只能讀「配對給自己」的學生
+    //   新增：老師可新增，但必須只配對給自己
+    //   修改：老師只能 (a) 改基本資料（姓名/電話/班別），不能動別人的配對
+    //                 (b) 把自己從配對移除
+    //   刪除：只有主管
+    function ctKeys() { return request.resource.data.diff(resource.data).affectedKeys(); }
     match /ctStudents/{id} {
       allow read: if isAdmin() || (isTeacher() && me() in resource.data.teacherIds);
-      allow write: if isAdmin();
+      allow create: if isAdmin() || (isTeacher()
+        && request.resource.data.teacherIds == [me()]
+        && request.resource.data.get('classTeachers', {}).values().hasOnly([me()]));
+      allow update: if isAdmin() || (isTeacher() && me() in resource.data.teacherIds && (
+        // (a) 編輯基本資料：配對不變；班別→老師對應只能保留原有的或加上自己
+        ( ctKeys().hasOnly(['name','english','phones','sourceClasses','classTeachers','updatedAt'])
+          && request.resource.data.teacherIds == resource.data.teacherIds
+          && request.resource.data.get('classTeachers', {}).values()
+               .hasOnly(resource.data.get('classTeachers', {}).values().concat([me()])) )
+        ||
+        // (b) 移除自己：teacherIds 只少了自己、classTeachers 只少了自己的項目
+        ( ctKeys().hasOnly(['teacherIds','classTeachers','active','updatedAt'])
+          && !(me() in request.resource.data.teacherIds)
+          && request.resource.data.teacherIds.hasAll(resource.data.teacherIds.removeAll([me()]))
+          && request.resource.data.teacherIds.size() == resource.data.teacherIds.size() - 1
+          && !(me() in request.resource.data.get('classTeachers', {}).values())
+          && resource.data.get('classTeachers', {}).values().removeAll([me()])
+               .hasAll(request.resource.data.get('classTeachers', {}).values()) )
+      ));
+      allow delete: if isAdmin();
     }
 
     // 電訪紀錄：老師只能讀寫自己的；主管全權
