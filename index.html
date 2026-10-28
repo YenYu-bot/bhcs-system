@@ -5453,12 +5453,80 @@ function ctMatchTeacher(name) {
   return t?.userId || '';
 }
 // 名冊內是否已有同一人：姓名相同且至少一支電話相同（或雙方都沒電話）
+// 同名時視為同一人的條件：電話有重疊、或任一方沒有電話、或既有那筆是「沒班別沒配對」的空殼
+function ctSamePerson(s, phones) {
+  const sp = s.phones || [];
+  if (!sp.length || !phones.length) return true;
+  if (sp.some(p => phones.includes(p))) return true;
+  return !(s.sourceClasses||[]).length && !(s.teacherIds||[]).length;
+}
 function ctFindExisting(name, phones) {
   const same = ctStudents.filter(s => s.name === name);
   if (!same.length) return { match:null, sameName:false };
-  const m = same.find(s => (!s.phones?.length && !phones.length) || (s.phones||[]).some(p => phones.includes(p)));
-  return { match:m || null, sameName:true };
+  // 多筆都符合時優先選：啟用中 → 有班別 → 建立較早
+  const cands = same.filter(s => ctSamePerson(s, phones))
+    .sort((a,b) => ((b.active!==false)-(a.active!==false)) || ((b.sourceClasses||[]).length-(a.sourceClasses||[]).length) || ((a.createdAt||0)-(b.createdAt||0)));
+  return { match:cands[0] || null, sameName:true };
 }
+
+// 找出名冊裡的重複學生：同名且 ctSamePerson 成立 → 分成一組
+function ctDuplicateGroups() {
+  const byName = {};
+  ctStudents.forEach(s => (byName[s.name] ||= []).push(s));
+  const groups = [];
+  Object.values(byName).forEach(arr => {
+    if (arr.length < 2) return;
+    const rest = arr.slice();
+    while (rest.length) {
+      const seed = rest.shift();
+      const grp = [seed];
+      for (let i = rest.length - 1; i >= 0; i--) {
+        if (grp.some(g => ctSamePerson(rest[i], g.phones||[]) || ctSamePerson(g, rest[i].phones||[]))) grp.push(rest.splice(i,1)[0]);
+      }
+      if (grp.length > 1) groups.push(grp);
+    }
+  });
+  return groups;
+}
+// 合併一組：保留最完整的一筆，其餘資料併入、電訪紀錄改指向保留筆、刪除其餘
+async function ctMergeGroup(grp) {
+  const sorted = grp.slice().sort((a,b) => ((b.active!==false)-(a.active!==false)) || ((b.sourceClasses||[]).length-(a.sourceClasses||[]).length) || ((b.teacherIds||[]).length-(a.teacherIds||[]).length) || ((a.createdAt||0)-(b.createdAt||0)));
+  const keep = sorted[0], others = sorted.slice(1);
+  const patch = {
+    phones:        [...new Set(sorted.flatMap(s => s.phones||[]))],
+    sourceClasses: [...new Set(sorted.flatMap(s => s.sourceClasses||[]))],
+    teacherIds:    [...new Set(sorted.flatMap(s => s.teacherIds||[]))],
+    classTeachers: Object.assign({}, ...sorted.slice().reverse().map(s => s.classTeachers||{})),
+    english: keep.english || others.find(s => s.english)?.english || '',
+    active: sorted.some(s => s.active !== false),
+    updatedAt: Date.now()
+  };
+  await updateDoc(doc(db,'ctStudents',keep._id), patch);
+  let moved = 0;
+  for (const o of others) {
+    const snap = await getDocs(query(collection(db,'contacts'), where('studentId','==',o._id)));
+    for (const d of snap.docs) { await updateDoc(doc(db,'contacts',d.id), { studentId:keep._id }); moved++; }
+    await deleteDoc(doc(db,'ctStudents',o._id));
+  }
+  return { keep, removed:others.length, moved };
+}
+window.ctMergeDuplicates = async function() {
+  const groups = ctDuplicateGroups();
+  if (!groups.length) { showToast('✅ 沒有重複的學生'); return; }
+  const preview = groups.slice(0, 15).map(g => `${g[0].name}（${g.length} 筆）`).join('、') + (groups.length > 15 ? ` …共 ${groups.length} 組` : '');
+  if (!confirm(`找到 ${groups.length} 組重複：\n${preview}\n\n每組保留最完整的一筆（班別、配對、電話合併，電訪紀錄一併轉移），其餘刪除。確定合併？`)) return;
+  showLoading('合併中...');
+  let removed = 0, moved = 0;
+  try {
+    for (let i = 0; i < groups.length; i++) {
+      document.getElementById('loadingText').textContent = `合併中 ${i+1}/${groups.length}...`;
+      const r = await ctMergeGroup(groups[i]); removed += r.removed; moved += r.moved;
+    }
+    showToast(`🧹 已合併 ${groups.length} 組，刪除 ${removed} 筆重複，轉移 ${moved} 筆電訪紀錄`);
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+  await ctAdminLoad(); ctRenderPairs();
+};
 window.ctImportFiles = async function(files) {
   if (!files?.length) return;
   showLoading('解析 PDF...');
@@ -5769,7 +5837,10 @@ window.ctRunImport = async function() {
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
             <div class="card-title" style="margin-bottom:0">🔗 老師 × 學生配對 <span id="ctPairCount" style="color:var(--muted);font-size:12px;font-weight:400"></span></div>
-            <button class="btn btn-teal btn-sm" onclick="ctOpenStudentModal()">＋ 手動新增學生</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost btn-sm" title="同名且電話相同（或其中一筆是沒班別沒配對的空殼）的學生合併成一筆" onclick="ctMergeDuplicates()">🧹 合併重複</button>
+              <button class="btn btn-teal btn-sm" onclick="ctOpenStudentModal()">＋ 手動新增學生</button>
+            </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center;margin-bottom:10px">
             <select class="select-input" id="ctPairClass" onchange="ctRenderPairs()"></select>
