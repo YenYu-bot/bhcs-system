@@ -4870,6 +4870,9 @@ function ctParseRosterPage(items) {
   };
   const pick = (line, re) => { const m = line.match(re); return m ? m[1].trim() : ''; };
   const className   = pick(headerLine(/^班別/),     /班別[:：]?\s*([^\s]+)/);
+  // jretc 偶爾多印一個右括號：「五年級(二))」→「五年級(二)」
+  let classNameFixed = className;
+  while (classNameFixed.endsWith(')') && (classNameFixed.match(/\)/g)||[]).length > (classNameFixed.match(/\(/g)||[]).length) classNameFixed = classNameFixed.slice(0, -1);
   const teacherName = pick(headerLine(/^教師姓名/), /教師姓名[:：]?\s*([^\s]+)/);
   const dateRange   = pick(headerLine(/^起迄/),     /起迄日期[:：]?\s*([0-9\/~～\-]+)/);
 
@@ -4895,7 +4898,7 @@ function ctParseRosterPage(items) {
     if (name) students.push({ seq:parseInt(s.str,10), name, english:eng, phones });
   });
   students.sort((a,b) => a.seq - b.seq);
-  return { className, teacherName, dateRange, students };
+  return { className:classNameFixed, teacherName, dateRange, students };
 }
 // 純文字備援：每行「姓名 電話 電話」
 function ctParseRosterText(text) {
@@ -5444,7 +5447,16 @@ window.ctImportFiles = async function(files) {
     for (const f of files) {
       const pages = await ctPdfPages(f);
       if (!pages.length) { showToast(`${f.name}：找不到點名表格式，請改用貼上文字`, 'error'); continue; }
-      pages.forEach(p => ctImportPages.push({ ...p, teacherId: ctMatchTeacher(p.teacherName), students: p.students.map(s => ({ ...s, include:true })) }));
+      // 同一班超過一頁（例如 36 格分兩頁）：班別相同的連續頁合併成一張表
+      pages.forEach(p => {
+        const last = ctImportPages[ctImportPages.length - 1];
+        const students = p.students.map(s => ({ ...s, include:true }));
+        if (last && last._file === f.name && last.className && last.className === p.className) {
+          last.students.push(...students);
+          return;
+        }
+        ctImportPages.push({ ...p, _file:f.name, teacherId: ctMatchTeacher(p.teacherName), students });
+      });
     }
     document.getElementById('ctImportFile').value = '';
     ctRenderImportPreview();
@@ -5516,9 +5528,13 @@ window.ctRunImport = async function() {
   showLoading('匯入名冊...');
   let created = 0, merged = 0, dropped = 0;
   try {
+    // 以新表為準：先把整批匯入完成，再以「班別」為單位判斷誰不在表上（同一班可能分多頁／多張表）
+    const onSheet = {};   // { className: Set(studentId) }
+    const sheetTeacher = {};
     for (const p of pages) {
       const C = p.className, T = p.teacherId;
-      const onPage = new Set();
+      const onPage = onSheet[C] || (onSheet[C] = new Set());
+      if (C && T) sheetTeacher[C] = T;
       for (const s of p.students) {
         const ex = ctFindExisting(s.name, s.phones);
         if (ex.match) {
@@ -5548,9 +5564,13 @@ window.ctRunImport = async function() {
           ctStudents.push(ns); created++; onPage.add(ns._id);
         }
       }
-      if (replace && C) {
-        // 原本在這個班、新表上沒有的學生
-        for (const s of ctStudents.filter(x => (x.sourceClasses||[]).includes(C) && !onPage.has(x._id))) {
+    }
+    if (replace) {
+      for (const C of Object.keys(onSheet)) {
+        if (!C) continue;
+        const T = sheetTeacher[C];
+        // 原本在這個班、整批新表上都沒有的學生
+        for (const s of ctStudents.filter(x => (x.sourceClasses||[]).includes(C) && !onSheet[C].has(x._id))) {
           // 舊資料沒有 classTeachers 時，以這張表的老師當作該班老師
           if (!(s.classTeachers||{})[C] && T) s.classTeachers = { ...(s.classTeachers||{}), [C]:T };
           const patch = ctDropClass(s, C);
