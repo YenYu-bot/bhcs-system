@@ -3136,9 +3136,10 @@ function renderTeachers() {
     <div class="teacher-card">
       <div class="teacher-info">
         <div class="teacher-name-big">${t.name}</div>
-        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆</div>
+        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆${(t.aliases||[]).length?`　點名表姓名：${esc(t.aliases.join('、'))}`:''}</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" title="點名表上印的姓名與帳號不同時，在這裡設定以便匯入時自動對應" onclick="setTeacherAliases('${t._id}')">🏷 點名表姓名</button>
         <button class="btn btn-ghost btn-sm" onclick="renameTeacher('${t._id}','${t.userId}','${t.name.replace(/'/g,"\\'")}')">✏️ 改名</button>
         <button class="btn btn-ghost btn-sm" onclick="resetPassword('${t._id}','${t.name}')">🔑 重設密碼</button>
         <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="promptDelete('${t._id}','${t.name}')">🗑 刪除</button>
@@ -3179,6 +3180,22 @@ window.addTeacher = async function() {
 
 // 重設密碼：前端無法改別人的 Auth 密碼，改用「換一個新的 Auth 使用者」達成。
 // 舊 Auth 使用者失去 teachers 文件後規則上沒有任何權限，等同停用。
+// 點名表姓名（別名）：jretc 點名表的「教師姓名」與帳號姓名不同時用，匯入名冊會據此自動配對
+window.setTeacherAliases = async function(id) {
+  const t = teachers.find(x => x._id === id); if (!t) return;
+  const cur = (t.aliases||[]).join('、');
+  const v = prompt(`「${t.name}」在點名表上的姓名（多個用、分隔，清空＝移除）：`, cur);
+  if (v === null) return;
+  const aliases = v.split(/[\s,，、]+/).map(x => x.trim()).filter(Boolean);
+  showLoading('儲存中...');
+  try {
+    await updateDoc(doc(db,'teachers',id), { aliases, updatedAt:Date.now() });
+    t.aliases = aliases; renderTeachers();
+    showToast(aliases.length ? `🏷 ${t.name} ← ${aliases.join('、')}` : '已移除點名表姓名');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
 window.resetPassword = async function(id,name) {
   const t = teachers.find(x => x._id === id);
   if (!t) return;
@@ -5428,9 +5445,11 @@ window.ctExportAdmin = function(fmt) {
 function ctMatchTeacher(name) {
   const n = String(name||'').replace(/老師$/,'').trim();
   if (!n) return '';
-  const t = teachers.find(t => t.name === name)
-    || teachers.find(t => t.name.replace(/老師$/,'') === n)
-    || teachers.find(t => t.name.includes(n) || n.includes(t.name.replace(/老師$/,'')));
+  const strip = x => String(x||'').replace(/老師$/,'').trim();
+  const t = teachers.find(t => (t.aliases||[]).some(a => a === name || strip(a) === n))   // 點名表姓名（別名）優先
+    || teachers.find(t => t.name === name)
+    || teachers.find(t => strip(t.name) === n)
+    || teachers.find(t => t.name.includes(n) || n.includes(strip(t.name)));
   return t?.userId || '';
 }
 // 名冊內是否已有同一人：姓名相同且至少一支電話相同（或雙方都沒電話）
