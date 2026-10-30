@@ -311,6 +311,11 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
           <div id="ctTeacherSummary" style="font-size:13px;color:var(--muted)"></div>
         </div>
         <div style="font-size:12px;color:var(--muted);margin:8px 0 10px;line-height:1.6">列出配對給你的學生。手機上點電話號碼可直接撥號；每位學生每月至少電訪一次，未填會標紅。</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <button class="btn btn-ghost btn-sm" onclick="ctSetTeacherMonth(-1)">◀</button>
+          <input class="field-input" type="month" id="ctTeacherMonth" onchange="ctSetTeacherMonth(0)" style="flex:1;text-align:center">
+          <button class="btn btn-ghost btn-sm" onclick="ctSetTeacherMonth(1)">▶</button>
+        </div>
         <div style="display:flex;gap:8px">
           <input class="field-input" id="ctSearch" placeholder="搜尋學生姓名或班別" oninput="ctRenderTeacherList()" style="flex:1">
           <button class="btn btn-teal btn-sm" style="white-space:nowrap" onclick="ctOpenStudentModal()">＋ 新增學生</button>
@@ -4824,10 +4829,48 @@ let _pdfjs          = null;
 const CT_METHODS = { phone:'電話', line:'LINE', inperson:'面談', noanswer:'未接通' };
 const CT_CALLEES = ['母親','父親','祖父母','其他'];
 
-function ctMonthRange() {
+// 月份工具：'2026-10' → ['2026-10-01','2026-10-31']（當月則迄日=今天）
+let ctTeacherMonth = todayISO().slice(0,7);
+function ctMonthRangeOf(ym) {
   const t = todayISO();
-  return [t.slice(0,8) + '01', t];
+  if (!ym) ym = t.slice(0,7);
+  const [y, m] = ym.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const to = ym === t.slice(0,7) ? t : `${ym}-${String(last).padStart(2,'0')}`;
+  return [`${ym}-01`, to];
 }
+function ctMonthRange() { return ctMonthRangeOf(ctTeacherMonth); }
+function ctMonthLabel(ym) { return ym ? `${ym.slice(0,4)} 年 ${Number(ym.slice(5,7))} 月` : ''; }
+// 把 input[type=month] 的值套到起迄日期欄；空值＝不限
+function ctApplyMonth(monthId, fromId, toId, cb) {
+  const ym = document.getElementById(monthId).value;
+  const [from, to] = ym ? ctMonthRangeOf(ym) : ['', ''];
+  document.getElementById(fromId).value = from;
+  document.getElementById(toId).value   = to;
+  if (cb) cb();
+}
+window.ctApplyMonth = ctApplyMonth;
+window.ctShiftMonth = function(monthId, delta, fromId, toId, cb) {
+  const el = document.getElementById(monthId);
+  const ym = el.value || todayISO().slice(0,7);
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  el.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  ctApplyMonth(monthId, fromId, toId, cb);
+};
+window.ctSetTeacherMonth = function(delta) {
+  const el = document.getElementById('ctTeacherMonth');
+  if (delta) {
+    const [y, m] = (el.value || ctTeacherMonth).split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    el.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  }
+  ctTeacherMonth = el.value || todayISO().slice(0,7);
+  const [from, to] = ctMonthRange();
+  document.getElementById('ctExpFrom').value = from;
+  document.getElementById('ctExpTo').value   = to;
+  ctRenderTeacherList();
+};
 function ctActiveStudents() { return ctStudents.filter(s => s.active !== false); }
 function ctTeacherName(id) { return teachers.find(t => t.userId === id)?.name || id; }
 function ctPhoneLinks(phones) {
@@ -5019,7 +5062,12 @@ async function ctReload() {
 
 function ctHistoryHtml(list, canEdit, showTeacher) {
   if (!list.length) return '<div style="font-size:12px;color:var(--muted);margin-top:10px">尚無電訪紀錄</div>';
-  return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:4px">` + list.map(c => `
+  let lastYm = '';
+  return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:4px">` + list.map(c => {
+    const ym = (c.date||'').slice(0,7);
+    const head = ym !== lastYm ? `<div style="font-size:11px;font-weight:700;color:var(--purple);letter-spacing:1px;margin:8px 0 2px">${esc(ctMonthLabel(ym))}</div>` : '';
+    lastYm = ym;
+    return head + `
     <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
         <div><b>${esc(c.date)}</b>
@@ -5034,7 +5082,7 @@ function ctHistoryHtml(list, canEdit, showTeacher) {
       <div style="white-space:pre-wrap;margin-top:4px;line-height:1.6">${esc(c.content)}</div>
       ${c.followUp ? `<div style="color:var(--yellow);margin-top:4px">📌 待追蹤：${esc(c.followUp)}</div>` : ''}
       ${c.nextDate ? `<div style="color:var(--muted);font-size:12px;margin-top:2px">下次聯絡：${esc(c.nextDate)}</div>` : ''}
-    </div>`).join('') + '</div>';
+    </div>`; }).join('') + '</div>';
 }
 
 // ── 老師端 ──
@@ -5047,6 +5095,8 @@ async function ctLoadMine() {
   ctContacts = ctSortContacts(cs.docs.map(d => ({_id:d.id, ...d.data()})));
 }
 window.renderTeacherContacts = async function() {
+  const mEl = document.getElementById('ctTeacherMonth');
+  if (!mEl.value) { mEl.value = todayISO().slice(0,7); ctTeacherMonth = mEl.value; const [f,t] = ctMonthRange(); document.getElementById('ctExpFrom').value = f; document.getElementById('ctExpTo').value = t; }
   const box = document.getElementById('ctTeacherList');
   box.innerHTML = '<div class="empty"><div>載入中...</div></div>';
   try { await ctLoadMine(); } catch(e) { box.innerHTML = `<div class="empty"><div>❌ ${esc(authErrMsg(e))}</div></div>`; console.error(e); return; }
@@ -5068,8 +5118,9 @@ window.ctRenderTeacherList = function() {
   });
   const groupKeys = Object.keys(groups).sort((a,b) => (a==='未標示班別') - (b==='未標示班別') || a.localeCompare(b));
   const done = list.filter(s => ctContacts.some(c => c.studentId === s._id && c.date >= from && c.date <= to)).length;
+  const isCur = ctTeacherMonth === todayISO().slice(0,7);
   document.getElementById('ctTeacherSummary').innerHTML =
-    `本月（${from.slice(5)} ～ ${to.slice(5)}）已電訪 <b style="color:${done===list.length&&list.length?'var(--teal)':'var(--yellow)'}">${done}</b> / ${list.length} 位`;
+    `${isCur ? '本月' : ctMonthLabel(ctTeacherMonth)}（${from.slice(5)} ～ ${to.slice(5)}）已電訪 <b style="color:${done===list.length&&list.length?'var(--teal)':'var(--yellow)'}">${done}</b> / ${list.length} 位`;
   document.getElementById('ctTeacherList').innerHTML = groupKeys.map(g => { const arr = groups[g]; return `
     <div style="font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 8px;letter-spacing:1px">${esc(g)}（${arr.length}）</div>
     ${arr.map(s => ctStudentCard(s, from, to, g === '未標示班別')).join('')}`; }).join('')
@@ -5084,7 +5135,7 @@ function ctStudentCard(s, from, to, showClasses) {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer" onclick="ctToggleStudent('${s._id}')">
       <div>
         <div style="font-weight:700;font-size:15px">${esc(s.name)}
-          <span class="tag ${done?'tag-green':'tag-red'}" style="margin-left:6px">${done?'本月已填':'本月未填'}</span>
+          <span class="tag ${done?'tag-green':'tag-red'}" style="margin-left:6px">${done?'已填':'未填'}</span>
           <span class="chevron" style="margin-left:4px;color:var(--muted);font-size:11px">${open?'▲':'▼'}</span></div>
         ${showClasses && (s.sourceClasses||[]).length ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">班別：${esc(s.sourceClasses.join('、'))}</div>` : ''}
         <div style="font-size:12px;margin-top:5px">${ctPhoneLinks(s.phones)}</div>
@@ -5185,9 +5236,18 @@ window.ctAdminSwitch = function(sec, el) {
   ctAdminSection = sec;
   ['missing','pairs','records','import'].forEach(s => document.getElementById('ct-sec-'+s).style.display = s === sec ? 'block' : 'none');
   document.querySelectorAll('#ctSubTabs .btn').forEach(b => { b.classList.toggle('btn-purple', b.dataset.sec === sec); b.classList.toggle('btn-ghost', b.dataset.sec !== sec); });
-  if (sec === 'missing') { ctSetDefaultRange('ctMissFrom','ctMissTo'); ctRenderMissing(); }
+  if (sec === 'missing') {
+    const mEl = document.getElementById('ctMissMonth');
+    if (!mEl.value && !document.getElementById('ctMissFrom').value) mEl.value = todayISO().slice(0,7);
+    ctSetDefaultRange('ctMissFrom','ctMissTo'); ctRenderMissing();
+  }
   if (sec === 'pairs')   ctRenderPairs();
-  if (sec === 'records') { ctPopulateRecordFilters(); ctAdminRenderRecords(); }
+  if (sec === 'records') {
+    ctPopulateRecordFilters();
+    const mEl = document.getElementById('ctRecMonth');
+    if (!mEl.dataset.init) { mEl.dataset.init = '1'; mEl.value = todayISO().slice(0,7); ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo'); }
+    ctAdminRenderRecords();
+  }
   if (sec === 'import')  ctRenderImportPreview();
 };
 
@@ -5413,9 +5473,17 @@ window.ctAdminRenderRecords = function() {
   const box = document.getElementById('ctRecordsOut');
   document.getElementById('ctRecCount').textContent = `${list.length} 筆`;
   if (!list.length) { box.innerHTML = '<div class="empty"><div class="empty-icon">📞</div><div>沒有符合的電訪紀錄</div></div>'; return; }
+  // 依月份分段（紀錄已依日期新→舊排序）
+  const byMonth = {};
+  list.forEach(c => { const ym = (c.date||'').slice(0,7); (byMonth[ym] ||= []).push(c); });
+  document.getElementById('ctRecCount').textContent = `${list.length} 筆` + (Object.keys(byMonth).length > 1 ? `　${Object.keys(byMonth).sort().reverse().map(ym => `${Number(ym.slice(5,7))}月 ${byMonth[ym].length}`).join('、')}` : '');
+  let lastYm = '';
   box.innerHTML = list.slice(0, 300).map(c => {
     const s = ctStudents.find(x => x._id === c.studentId);
-    return `<div class="card" style="padding:12px 14px;margin-bottom:8px">
+    const ym = (c.date||'').slice(0,7);
+    const head = ym !== lastYm ? `<div style="font-size:12px;font-weight:700;color:var(--purple);letter-spacing:1px;margin:16px 0 8px">📅 ${esc(ctMonthLabel(ym))}（${byMonth[ym].length} 筆）</div>` : '';
+    lastYm = ym;
+    return head + `<div class="card" style="padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
         <div><b>${esc(c.date)}</b>　<span style="font-weight:700">${esc(c.studentName)}</span>
           <span style="color:var(--muted);font-size:12px">${esc((s?.sourceClasses||[]).join('、'))}</span>
@@ -5821,8 +5889,14 @@ window.ctRunImport = async function() {
         <div class="card">
           <div class="card-title">指定期間：每個「老師 × 學生」配對至少要有一筆電訪</div>
           <div class="field-row">
-            <div><label class="field-label">開始日期</label><input class="field-input" type="date" id="ctMissFrom" onchange="ctRenderMissing()"></div>
-            <div><label class="field-label">結束日期</label><input class="field-input" type="date" id="ctMissTo" onchange="ctRenderMissing()"></div>
+            <div><label class="field-label">開始日期</label><input class="field-input" type="date" id="ctMissFrom" onchange="document.getElementById('ctMissMonth').value='';ctRenderMissing()"></div>
+            <div><label class="field-label">結束日期</label><input class="field-input" type="date" id="ctMissTo" onchange="document.getElementById('ctMissMonth').value='';ctRenderMissing()"></div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+            <span style="font-size:12px;color:var(--muted);white-space:nowrap">或選月份：</span>
+            <button class="btn btn-ghost btn-sm" onclick="ctShiftMonth('ctMissMonth',-1,'ctMissFrom','ctMissTo',ctRenderMissing)">◀</button>
+            <input class="field-input" type="month" id="ctMissMonth" onchange="ctApplyMonth('ctMissMonth','ctMissFrom','ctMissTo',ctRenderMissing)" style="flex:1;text-align:center">
+            <button class="btn btn-ghost btn-sm" onclick="ctShiftMonth('ctMissMonth',1,'ctMissFrom','ctMissTo',ctRenderMissing)">▶</button>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-purple btn-sm" onclick="ctRenderMissing()">🔎 查詢</button>
@@ -5860,11 +5934,17 @@ window.ctRunImport = async function() {
       <div id="ct-sec-records" style="display:none">
         <div class="card">
           <div class="card-title">📋 電訪紀錄 <span id="ctRecCount" style="color:var(--muted);font-size:12px;font-weight:400"></span></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+            <button class="btn btn-ghost btn-sm" onclick="ctShiftMonth('ctRecMonth',-1,'ctRecFrom','ctRecTo',ctAdminRenderRecords)">◀</button>
+            <input class="field-input" type="month" id="ctRecMonth" onchange="ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo',ctAdminRenderRecords)" style="flex:1;text-align:center">
+            <button class="btn btn-ghost btn-sm" onclick="ctShiftMonth('ctRecMonth',1,'ctRecFrom','ctRecTo',ctAdminRenderRecords)">▶</button>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('ctRecMonth').value='';ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo',ctAdminRenderRecords)">全部</button>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <select class="select-input" id="ctRecTeacher" onchange="ctAdminRenderRecords()"></select>
             <input class="field-input" id="ctRecSearch" placeholder="搜尋學生或內容" oninput="ctAdminRenderRecords()">
-            <input class="field-input" type="date" id="ctRecFrom" onchange="ctAdminRenderRecords()">
-            <input class="field-input" type="date" id="ctRecTo" onchange="ctAdminRenderRecords()">
+            <input class="field-input" type="date" id="ctRecFrom" onchange="document.getElementById('ctRecMonth').value='';ctAdminRenderRecords()">
+            <input class="field-input" type="date" id="ctRecTo" onchange="document.getElementById('ctRecMonth').value='';ctAdminRenderRecords()">
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-purple btn-sm" onclick="ctExportAdmin('print')">🖨 列印版</button>
