@@ -262,12 +262,13 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
     <div style="font-size:22px;font-weight:900;margin-bottom:4px;">登入系統</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:24px;">老師與主管共用此登入頁面</div>
     <label class="field-label">帳號</label>
-    <input class="field-input" id="loginUser" placeholder="輸入帳號" style="margin-bottom:14px">
+    <input class="field-input" id="loginUser" placeholder="輸入帳號（或主管 Email）" style="margin-bottom:14px">
     <label class="field-label">密碼</label>
     <input class="field-input" type="password" id="loginPass" placeholder="••••••" style="margin-bottom:20px" onkeydown="if(event.key==='Enter')login()">
     <button class="btn btn-teal" style="width:100%;padding:12px;font-size:15px;" onclick="login()">登入</button>
     <div id="loginError" style="color:var(--red);font-size:13px;margin-top:10px;text-align:center;display:none;">帳號或密碼錯誤</div>
-    <div style="text-align:center;margin-top:18px;">
+    <div style="text-align:center;margin-top:18px;display:flex;justify-content:center;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="forgotPassword()">忘記密碼？</button>
       <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="toggleAdminSetup(true)">首次使用？建立主管帳號</button>
     </div>
     <div id="adminSetupBox" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
@@ -529,7 +530,7 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
 import { getFirestore, collection, addDoc, getDocs, getDoc, doc, updateDoc, deleteDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updatePassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updatePassword, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
 
 // ── Firebase（bhcs-system）──
 // 這組 config 不是祕密；資料安全靠 Firebase Authentication + firestore.rules。
@@ -696,7 +697,9 @@ window.login = async function() {
   showLoading('驗證中...');
   try {
     let email = ADMIN_EMAIL;
-    if (userId !== ADMIN_USER) {
+    if (userId.includes('@')) {
+      email = userId;                    // 備援主管帳號：直接用真實 Email 登入
+    } else if (userId !== ADMIN_USER) {
       // 老師：先查 userId → 合成信箱（logins 集合只允許單筆 get，無法列舉）
       const ls = await getDoc(doc(db,'logins',userId));
       if (!ls.exists()) { hideLoading(); showLoginError(); return; }
@@ -715,8 +718,15 @@ window.login = async function() {
 async function enterApp(user) {
   showLoading('載入中...');
   try {
-    if (user.email === ADMIN_EMAIL) {
-      currentUser = { id: ADMIN_USER, name: '主管', uid: user.uid, isAdmin: true };
+    let isAdmin = user.email === ADMIN_EMAIL;
+    if (!isAdmin && user.email && user.email.includes('@') && !user.email.endsWith(AUTH_DOMAIN_SUFFIX)) {
+      // 真實 Email：檢查是否為備援主管帳號
+      const ad = await getDoc(doc(db,'admins',user.uid)).catch(() => null);
+      isAdmin = !!(ad && ad.exists());
+      if (!isAdmin) { await signOut(auth); hideLoading(); showLoginError('此帳號不是主管帳號'); showPage('login'); return; }
+    }
+    if (isAdmin) {
+      currentUser = { id: ADMIN_USER, name: '主管', uid: user.uid, email: user.email, isAdmin: true };
       hideLoading();
       showPage('admin');
       adminLoadAll();
@@ -736,6 +746,7 @@ async function enterApp(user) {
     hideLoading();
     showPage('teacher');
     document.getElementById('teacherBadge').textContent = t.name;
+    if (t.mustChangePassword) { showForcePasswordModal(); }
     // loadEntries 需要 myClasses 才知道要撈哪些共同班級，必須依序執行
     loadClasses().then(loadEntries);
   } catch(e) {
@@ -771,6 +782,38 @@ window.changeMyPassword = async function() {
   if (p2 !== p1) { showToast('兩次密碼不一致','error'); return; }
   showLoading('更新密碼...');
   try { await updatePassword(auth.currentUser, p1); showToast('🔑 密碼已更新'); }
+  catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+// 強制改密碼：主管建立／重設／搬遷的帳號第一次登入時必須改掉初始密碼
+function showForcePasswordModal() {
+  document.getElementById('forcePass1').value = document.getElementById('forcePass2').value = '';
+  document.getElementById('forcePassModal').classList.add('show');
+  setTimeout(() => document.getElementById('forcePass1').focus(), 50);
+}
+window.submitForcePassword = async function() {
+  const p1 = document.getElementById('forcePass1').value, p2 = document.getElementById('forcePass2').value;
+  if (p1.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  if (p1 !== p2) { showToast('兩次密碼不一致','error'); return; }
+  if (p1 === '123456' || /^(\d)\1+$/.test(p1)) { showToast('請不要用太簡單的密碼','error'); return; }
+  showLoading('更新密碼...');
+  try {
+    await updatePassword(auth.currentUser, p1);
+    await updateDoc(doc(db,'teachers',currentUser.uid), { mustChangePassword:false, updatedAt:Date.now() });
+    document.getElementById('forcePassModal').classList.remove('show');
+    showToast('🔑 密碼已更新，之後請用新密碼登入');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+// 忘記密碼：只有真實 Email（備援主管帳號）收得到重設信；老師帳號是合成信箱，由主管重設
+window.forgotPassword = async function() {
+  const v = prompt('請輸入你的登入 Email（僅主管備援帳號適用；老師請聯絡主管重設密碼）：');
+  if (!v) return;
+  const email = v.trim();
+  if (!email.includes('@') || email.endsWith(AUTH_DOMAIN_SUFFIX)) { showToast('老師帳號無法自行重設，請聯絡主管','error'); return; }
+  showLoading('寄送中...');
+  try { await sendPasswordResetEmail(auth, email); showToast('📧 若此 Email 有主管帳號，重設信已寄出'); }
   catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
   hideLoading();
 };
@@ -1609,7 +1652,7 @@ window.adminSwitchTab = function(name, el) {
     }
   }
   if (name==='stats')   adminRenderStats();
-  if (name==='accounts') renderTeachers();
+  if (name==='accounts') { renderTeachers(); renderBackupAdmins(); }
   if (name==='student') renderAdminStudentPick();
   if (name==='schedule') { renderScheduleEditor(); renderExportPanel(); renderClosureAdmin().then(renderScheduleStatusBanner); }
   if (name==='accounts') renderResetPanel().catch(e => console.error('renderResetPanel:', e));
@@ -3145,7 +3188,7 @@ function renderTeachers() {
     <div class="teacher-card">
       <div class="teacher-info">
         <div class="teacher-name-big">${t.name}</div>
-        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆${(t.aliases||[]).length?`　點名表姓名：${esc(t.aliases.join('、'))}`:''}</div>
+        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆${(t.aliases||[]).length?`　點名表姓名：${esc(t.aliases.join('、'))}`:''}${t.mustChangePassword?'　<span class="tag tag-yellow">待改密碼</span>':''}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" title="點名表上印的姓名與帳號不同時，在這裡設定以便匯入時自動對應" onclick="setTeacherAliases('${t._id}')">🏷 點名表姓名</button>
@@ -3161,9 +3204,56 @@ function renderTeachers() {
 async function provisionTeacher(userId, name, pass, authEmail) {
   const email = authEmail || (userId + AUTH_DOMAIN_SUFFIX);
   const uid   = await createAuthUser(email, pass);
-  await setDoc(doc(db,'teachers',uid), { userId, name, authEmail:email, createdAt:Date.now() });
+  await setDoc(doc(db,'teachers',uid), { userId, name, authEmail:email, mustChangePassword:true, createdAt:Date.now() });
   await setDoc(doc(db,'logins',userId), { authEmail:email, uid });
   return uid;
+}
+
+// 要求所有老師下次登入時改密碼（給搬遷進來、還在用初始密碼的帳號用）
+window.requireAllPasswordChange = async function() {
+  if (!confirm(`要求全部 ${teachers.length} 位老師下次登入時必須改密碼？`)) return;
+  showLoading('設定中...');
+  try {
+    for (const t of teachers) await updateDoc(doc(db,'teachers',t._id), { mustChangePassword:true, updatedAt:Date.now() });
+    teachers.forEach(t => t.mustChangePassword = true);
+    renderTeachers(); showToast('✅ 已設定，老師下次登入會被要求改密碼');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+// 備援主管帳號：用真實 Email 建一個 Auth 使用者，寫入 admins/{uid}；忘記密碼時可收重設信
+window.addBackupAdmin = async function() {
+  const email = (prompt('備援主管帳號的 Email（真實信箱，忘記密碼時會寄重設信到這裡）：') || '').trim();
+  if (!email) return;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith(AUTH_DOMAIN_SUFFIX)) { showToast('請輸入有效的真實 Email','error'); return; }
+  const pass = prompt(`設定「${email}」的登入密碼（至少 ${PASS_MIN} 碼）：`);
+  if (!pass) return;
+  if (pass.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  showLoading('建立備援主管帳號...');
+  try {
+    const uid = await createAuthUser(email, pass);
+    await setDoc(doc(db,'admins',uid), { email, createdAt:Date.now(), createdBy:currentUser.id });
+    showToast(`✅ 備援主管帳號已建立：${email}`);
+    await renderBackupAdmins();
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+};
+window.removeBackupAdmin = async function(uid, email) {
+  if (!confirm(`移除備援主管帳號「${email}」？（Auth 使用者仍在，但失去主管權限）`)) return;
+  try { await deleteDoc(doc(db,'admins',uid)); showToast('已移除'); await renderBackupAdmins(); }
+  catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+};
+async function renderBackupAdmins() {
+  const box = document.getElementById('backupAdminList'); if (!box) return;
+  try {
+    const snap = await getDocs(collection(db,'admins'));
+    const list = snap.docs.map(d => ({ _id:d.id, ...d.data() }));
+    box.innerHTML = list.length ? list.map(a => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border);font-size:13px">
+        <span>📧 ${esc(a.email)}${a._id===currentUser.uid?' <span class="tag tag-green">目前登入</span>':''}</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeBackupAdmin('${a._id}','${esc(a.email)}')">移除</button>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">尚未設定。建議至少建一個，否則主管密碼忘了只能到 Firebase 主控台處理。</div>';
+  } catch(e) { box.innerHTML = `<div style="font-size:12px;color:var(--red)">❌ ${esc(authErrMsg(e))}（規則可能尚未更新）</div>`; }
 }
 
 window.addTeacher = async function() {
@@ -5887,6 +5977,20 @@ window.ctRunImport = async function() {
   </div>
 </div>
 
+<!-- Force Password Change Modal（無法關閉） -->
+<div class="modal-overlay" id="forcePassModal" style="z-index:300">
+  <div class="modal">
+    <div class="modal-title">🔑 請先設定你的密碼</div>
+    <div class="modal-sub">你目前使用的是主管給的初始密碼，為了保護學生與家長資料，第一次登入必須改成自己的密碼。</div>
+    <input class="field-input" type="password" id="forcePass1" placeholder="新密碼（至少 6 碼）" style="margin-bottom:10px" autocomplete="new-password">
+    <input class="field-input" type="password" id="forcePass2" placeholder="再輸入一次" style="margin-bottom:12px" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitForcePassword()">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" style="flex:1" onclick="logout();document.getElementById('forcePassModal').classList.remove('show')">登出</button>
+      <button class="btn btn-teal" style="flex:1;padding:10px" onclick="submitForcePassword()">設定密碼</button>
+    </div>
+  </div>
+</div>
+
 <!-- Contact Form Modal -->
 <div class="modal-overlay" id="ctModal" style="align-items:flex-start;padding:16px;overflow-y:auto;">
   <div class="modal" style="max-width:560px;margin:auto;">
@@ -6384,8 +6488,23 @@ window.ctRunImport = async function() {
         </div>
         <button class="btn btn-teal" style="margin-top:14px;padding:10px 24px;" onclick="addTeacher()">✅ 新增帳號</button>
       </div>
-      <div style="font-size:13px;font-weight:700;color:var(--muted);margin-bottom:12px;">👥 目前老師帳號（<span id="teacherCount">0</span> 位）</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <div style="font-size:13px;font-weight:700;color:var(--muted);">👥 目前老師帳號（<span id="teacherCount">0</span> 位）</div>
+        <button class="btn btn-ghost btn-sm" title="全部老師下次登入時必須改密碼" onclick="requireAllPasswordChange()">🔑 要求全部老師改密碼</button>
+      </div>
       <div id="teacherList"></div>
+
+      <!-- Backup admin -->
+      <div style="background:var(--surface);border:1px solid rgba(86,204,178,.3);border-left:3px solid var(--teal);border-radius:var(--radius);padding:18px;margin-top:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:15px;font-weight:700;color:var(--teal);margin-bottom:4px;">📧 備援主管帳號</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.6">用真實 Email 建立的主管帳號。可直接在登入頁用 Email 登入，忘記密碼時按「忘記密碼？」收重設信。<br>主要帳號 admin 的密碼忘了，就用這個登入。</div>
+          </div>
+          <button class="btn btn-teal btn-sm" onclick="addBackupAdmin()">＋ 新增備援帳號</button>
+        </div>
+        <div id="backupAdminList" style="margin-top:10px"></div>
+      </div>
 
       <!-- Migration from legacy project -->
       <div style="background:var(--surface);border:1px solid rgba(168,85,247,.3);border-left:3px solid var(--purple);border-radius:var(--radius);padding:18px;margin-top:24px;">
