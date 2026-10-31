@@ -1,0 +1,12 @@
+{
+  "name": "bhcs-system",
+  "private": true,
+  "description": "百宏文教 · 教室日誌與電訪表（GitHub Pages 靜態站，無建置步驟）",
+  "scripts": {
+    "test": "node test/run-all.js",
+    "bump": "python3 tools/bump-version.py"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

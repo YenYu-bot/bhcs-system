@@ -1,0 +1,4423 @@
+// 百宏文教 · 教室日誌與電訪表 — 核心＋教室日誌模組
+// 載入順序：index.html → js/app.js（本檔）→ js/contacts.js（電訪表，從本檔 import 共用物件）
+// 事件綁定走 inline onclick="fn()"，所以對外函式都掛在 window.*。
+import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+import { getFirestore, collection, addDoc, getDocs, getDoc, doc, updateDoc, deleteDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updatePassword, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
+
+// ── Firebase（bhcs-system）──
+// 這組 config 不是祕密；資料安全靠 Firebase Authentication + firestore.rules。
+const firebaseConfig = {
+  apiKey: "AIzaSyA4l5zcyEVzbLfpeCbDvDjQsw2Rfkfizao",
+  authDomain: "bhcs-system.firebaseapp.com",
+  projectId: "bhcs-system",
+  storageBucket: "bhcs-system.firebasestorage.app",
+  messagingSenderId: "920353312937",
+  appId: "1:920353312937:web:7517cabddd3aacd83659b8"
+};
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
+
+// ── 帳號制度 ──
+// 老師帳號 userId（例 bhcst0001）對應一個合成信箱 {userId}@bhcs.local 的 Auth 使用者。
+//   teachers/{uid}   : { userId, name, authEmail, createdAt }   ← uid 為 Auth 使用者 id
+//   logins/{userId}  : { authEmail, uid }                       ← 登入前查 userId → email 用（規則只開 get）
+// 主管固定使用 admin@bhcs.local，規則以 request.auth.token.email 判斷主管身分。
+const AUTH_DOMAIN_SUFFIX = '@bhcs.local';
+const ADMIN_USER  = 'admin';
+const ADMIN_EMAIL = ADMIN_USER + AUTH_DOMAIN_SUFFIX;
+const PASS_MIN    = 6;   // Firebase Auth 最少 6 碼
+
+// 建立其他使用者時用的第二個 app（避免把目前登入的主管踢掉）
+function secondaryAuth() {
+  const name = 'secondary';
+  const sApp = getApps().some(a => a.name === name) ? getApp(name) : initializeApp(firebaseConfig, name);
+  return getAuth(sApp);
+}
+// 用第二個 app 建立 Auth 使用者，回傳 uid；建完立刻登出第二個 app
+async function createAuthUser(email, pass) {
+  const sAuth = secondaryAuth();
+  const cred  = await createUserWithEmailAndPassword(sAuth, email, pass);
+  const uid   = cred.user.uid;
+  await signOut(sAuth);
+  return uid;
+}
+function authErrMsg(e) {
+  const c = e?.code || '';
+  if (/wrong-password|invalid-credential|invalid-login-credentials|user-not-found/.test(c)) return '帳號或密碼錯誤';
+  if (/email-already-in-use/.test(c)) return '此帳號已存在';
+  if (/weak-password/.test(c)) return `密碼至少 ${PASS_MIN} 碼`;
+  if (/too-many-requests/.test(c)) return '嘗試次數過多，請稍後再試';
+  if (/network-request-failed/.test(c)) return '連線失敗，請檢查網路';
+  if (/requires-recent-login/.test(c)) return '請重新登入後再試';
+  if (/operation-not-allowed/.test(c)) return 'Firebase 尚未啟用「電子郵件/密碼」登入';
+  if (/permission-denied/.test(c)) return '沒有權限（請確認 firestore.rules 已更新）';
+  return e?.message || String(e);
+}
+
+// ── Constants ──
+const ATT_STATES = ['present','late','sick','leave','absent'];
+const ATT_LABELS = {present:'出勤', late:'遲到', sick:'病假', leave:'事假', absent:'曠課'};
+const ATT_EMOJI  = {present:'✅',   late:'🕐',   sick:'🤒',   leave:'📋',   absent:'❌'};
+const ATT_BG     = {present:'rgba(86,204,178,.2)', late:'rgba(255,159,67,.2)', sick:'rgba(86,130,204,.2)', leave:'rgba(192,132,252,.2)', absent:'rgba(255,107,107,.2)'};
+const ATT_CLASSES= {present:'att-present', late:'att-late', sick:'att-sick', leave:'att-leave', absent:'att-absent'};
+const ATT_TAG    = {present:'tag-green',   late:'tag-orange', sick:'tag-blue', leave:'tag-purple', absent:'tag-red'};
+const RATING_COLORS = ['','#ff6b6b','#ff9f43','#ffd166','#a8e063','#56ccb2'];
+const RATING_LABELS = ['','極差','較差','普通','良好','優秀'];
+const GRADES = ['A++','A+','A','B++','B+','B','C'];
+const GRADE_COLORS = {'A++':'#56ccb2','A+':'#56ccb2','A':'#a8e063','B++':'#ffd166','B+':'#ffd166','B':'#ff9f43','C':'#ff6b6b'};
+const HW_STATES  = ['good','partial','missing'];
+const HW_CLASSES = {good:'hw-good', partial:'hw-partial', missing:'hw-missing'};
+const HW_LABELS  = {good:'優良', partial:'部分未完成', missing:'未完成/沒帶'};
+const HW_EMOJI   = {good:'✅', partial:'⚠️', missing:'❌'};
+
+function hwVal(v) {
+  if (v===true  || v==='good')    return 'good';
+  if (v===false || v==='missing') return 'missing';
+  return HW_STATES.includes(v) ? v : 'good';
+}
+
+let scoreMode = 'score'; // kept for compat
+let exams = []; // [{id,range,mode,maxScore,scores:{name:val}}]
+
+function normAtt(v) {
+  if (v === true  || v === 'present') return 'present';
+  if (v === false || v === 'absent')  return 'absent';
+  return ATT_STATES.includes(v) ? v : 'present';
+}
+
+// Get all exam scores for a student from an entry (handles both old e.scores and new e.exams)
+function getStudentScores(e, name) {
+  // New format: e.exams array
+  if (e.exams && e.exams.length) {
+    return e.exams
+      .filter(ex => ex.scores?.[name]!==''&&ex.scores?.[name]!=null)
+      .map(ex => ({
+        range: ex.range||'',
+        mode:  ex.mode||'score',
+        score: ex.scores[name],
+        max:   ex.maxScore||100
+      }));
+  }
+  // Old format: e.scores + e.maxScore
+  const v = e.scores?.[name];
+  if (v!==''&&v!=null) {
+    return [{ range:'', mode:'score', score:v, max:e.maxScore||100 }];
+  }
+  return [];
+}
+
+// Render a compact score cell for student report tables
+function renderScoreCell(e, name) {
+  const scores = getStudentScores(e, name);
+  if (!scores.length) return '—';
+  return scores.map(s => {
+    if (s.mode==='grade') {
+      return `<span style="color:${GRADE_COLORS[s.score]||'var(--text)'};font-weight:700">${s.score}</span>`;
+    }
+    const pct = Math.round(parseFloat(s.score)/s.max*100);
+    const col = pct>=90?'var(--teal)':pct>=60?'var(--yellow)':'var(--red)';
+    return `<span style="color:${col};font-weight:700">${s.score}/${s.max}<br><span style="font-size:10px">${pct}%</span></span>`;
+  }).join('<br>');
+}
+
+// ── State ──
+let currentUser     = null;   // { id, name }
+let myClasses       = [];     // teacher's classes
+let entries         = [];     // teacher's entries
+let currentStudents = [];
+let attendance      = {};
+let homework        = {}; // 'good'|'partial'|'missing'
+let classRating     = {};
+let _lastSelectedClassId = null;
+
+// admin state
+let allEntries      = [];
+let teachers        = [];
+let deleteTargetId  = null;
+
+// ── UI Helpers ──
+function showLoading(msg) {
+  document.getElementById('loadingText').textContent = msg || '處理中...';
+  document.getElementById('loadingOverlay').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+}
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+window.showToast = showToast;
+
+// ── LOGIN / LOGOUT（Firebase Auth）──
+function showLoginError(msg) {
+  const el = document.getElementById('loginError');
+  el.textContent = msg || '帳號或密碼錯誤';
+  el.style.display = 'block';
+}
+
+window.login = async function() {
+  const userId = document.getElementById('loginUser').value.trim().toLowerCase();
+  const pass   = document.getElementById('loginPass').value;
+  document.getElementById('loginError').style.display = 'none';
+  if (!userId || !pass) { showLoginError('請輸入帳號與密碼'); return; }
+
+  showLoading('驗證中...');
+  try {
+    let email = ADMIN_EMAIL;
+    if (userId.includes('@')) {
+      email = userId;                    // 備援主管帳號：直接用真實 Email 登入
+    } else if (userId !== ADMIN_USER) {
+      // 老師：先查 userId → 合成信箱（logins 集合只允許單筆 get，無法列舉）
+      const ls = await getDoc(doc(db,'logins',userId));
+      if (!ls.exists()) { hideLoading(); showLoginError(); return; }
+      email = ls.data().authEmail;
+    }
+    const cred = await signInWithEmailAndPassword(auth, email, pass);
+    await enterApp(cred.user);
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showLoginError(authErrMsg(e));
+  }
+};
+
+// 登入成功（或重新整理後自動恢復登入）→ 依身分進入對應頁面
+async function enterApp(user) {
+  showLoading('載入中...');
+  try {
+    let isAdmin = user.email === ADMIN_EMAIL;
+    if (!isAdmin && user.email && user.email.includes('@') && !user.email.endsWith(AUTH_DOMAIN_SUFFIX)) {
+      // 真實 Email：檢查是否為備援主管帳號
+      const ad = await getDoc(doc(db,'admins',user.uid)).catch(() => null);
+      isAdmin = !!(ad && ad.exists());
+      if (!isAdmin) { await signOut(auth); hideLoading(); showLoginError('此帳號不是主管帳號'); showPage('login'); return; }
+    }
+    if (isAdmin) {
+      currentUser = { id: ADMIN_USER, name: '主管', uid: user.uid, email: user.email, isAdmin: true };
+      hideLoading();
+      showPage('admin');
+      adminLoadAll();
+      return;
+    }
+    const ts = await getDoc(doc(db,'teachers',user.uid));
+    if (!ts.exists()) {
+      // Auth 有帳號但 teachers 沒有對應文件（例如已被主管刪除／重設過密碼的舊登入）
+      await signOut(auth);
+      hideLoading();
+      showLoginError('此帳號已停用，請聯絡主管');
+      showPage('login');
+      return;
+    }
+    const t = ts.data();
+    currentUser = { id: t.userId, name: t.name, uid: user.uid };
+    hideLoading();
+    showPage('teacher');
+    document.getElementById('teacherBadge').textContent = t.name;
+    if (t.mustChangePassword) { showForcePasswordModal(); }
+    // loadEntries 需要 myClasses 才知道要撈哪些共同班級，必須依序執行
+    loadClasses().then(loadEntries);
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showLoginError(authErrMsg(e));
+    showPage('login');
+  }
+}
+
+// 重新整理頁面時自動恢復登入狀態（只在第一次 auth 事件時處理）
+let _authInit = false;
+onAuthStateChanged(auth, user => {
+  if (_authInit) return;
+  _authInit = true;
+  if (user) enterApp(user);
+});
+
+window.logout = async function() {
+  try { await signOut(auth); } catch(e) { console.error(e); }
+  currentUser = null; myClasses = []; entries = []; allEntries = []; teachers = [];
+  closures = []; invalidateCache();
+  if (window.ctResetState) window.ctResetState();
+  showPage('login');
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
+};
+
+// 老師／主管自行更改密碼
+window.changeMyPassword = async function() {
+  const p1 = prompt(`請輸入新密碼（至少 ${PASS_MIN} 碼）：`);
+  if (p1 === null) return;
+  if (p1.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  const p2 = prompt('再輸入一次新密碼：');
+  if (p2 !== p1) { showToast('兩次密碼不一致','error'); return; }
+  showLoading('更新密碼...');
+  try { await updatePassword(auth.currentUser, p1); showToast('🔑 密碼已更新'); }
+  catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+// 改密碼提醒（不強迫）：主管建立／重設／搬遷的帳號登入時提醒改掉初始密碼；
+// 「稍後再說」下次登入再提醒，「不再提醒」或改完密碼後就不再出現
+function showForcePasswordModal() {
+  document.getElementById('forcePass1').value = document.getElementById('forcePass2').value = '';
+  document.getElementById('forcePassModal').classList.add('show');
+  setTimeout(() => document.getElementById('forcePass1').focus(), 50);
+}
+window.dismissPasswordReminder = async function(forever) {
+  document.getElementById('forcePassModal').classList.remove('show');
+  if (!forever) return;
+  try { await updateDoc(doc(db,'teachers',currentUser.uid), { mustChangePassword:false, updatedAt:Date.now() }); }
+  catch(e) { console.error(e); }
+};
+window.submitForcePassword = async function() {
+  const p1 = document.getElementById('forcePass1').value, p2 = document.getElementById('forcePass2').value;
+  if (p1.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  if (p1 !== p2) { showToast('兩次密碼不一致','error'); return; }
+  if (p1 === '123456' || /^(\d)\1+$/.test(p1)) { showToast('請不要用太簡單的密碼','error'); return; }
+  showLoading('更新密碼...');
+  try {
+    await updatePassword(auth.currentUser, p1);
+    await updateDoc(doc(db,'teachers',currentUser.uid), { mustChangePassword:false, updatedAt:Date.now() });
+    document.getElementById('forcePassModal').classList.remove('show');
+    showToast('🔑 密碼已更新，之後請用新密碼登入');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+// 忘記密碼：只有真實 Email（備援主管帳號）收得到重設信；老師帳號是合成信箱，由主管重設
+window.forgotPassword = async function() {
+  const v = prompt('請輸入你的登入 Email（僅主管備援帳號適用；老師請聯絡主管重設密碼）：');
+  if (!v) return;
+  const email = v.trim();
+  if (!email.includes('@') || email.endsWith(AUTH_DOMAIN_SUFFIX)) { showToast('老師帳號無法自行重設，請聯絡主管','error'); return; }
+  showLoading('寄送中...');
+  try { await sendPasswordResetEmail(auth, email); showToast('📧 若此 Email 有主管帳號，重設信已寄出'); }
+  catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+// 首次使用：建立主管帳號（admin@bhcs.local）。帳號已存在時 Firebase 會拒絕，之後無法再被搶註冊。
+window.toggleAdminSetup = function(show) {
+  document.getElementById('adminSetupBox').style.display = show ? 'block' : 'none';
+};
+window.setupAdmin = async function() {
+  const p1 = document.getElementById('setupPass').value;
+  const p2 = document.getElementById('setupPass2').value;
+  if (p1.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  if (p1 !== p2) { showToast('兩次密碼不一致','error'); return; }
+  showLoading('建立主管帳號...');
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, p1);
+    showToast('✅ 主管帳號已建立');
+    document.getElementById('setupPass').value = document.getElementById('setupPass2').value = '';
+    toggleAdminSetup(false);
+    await enterApp(cred.user);
+  } catch(e) { hideLoading(); showToast('❌ '+authErrMsg(e),'error'); }
+};
+
+function showPage(page) {
+  document.getElementById('loginPage').style.display = page === 'login'   ? 'block' : 'none';
+  document.getElementById('appPage').style.display   = page === 'teacher' ? 'block' : 'none';
+  document.getElementById('adminPage').style.display = page === 'admin'   ? 'block' : 'none';
+}
+
+// ── TEACHER TABS ──
+window.switchTab = function(name, el) {
+  ['journal','classes','history','report','tasks','contacts'].forEach(t => document.getElementById('tab-'+t).style.display = 'none');
+  document.querySelectorAll('#appPage .tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-'+name).style.display = 'block';
+  el.classList.add('active');
+  if (name === 'classes') renderClassList();
+  if (name === 'history') { Promise.all([loadEntries(), loadClosures()]).then(renderHistory); }
+  if (name === 'report')  { loadEntries().then(() => { renderReportClassList(); renderStudentQuickPick(); }); }
+  if (name === 'tasks')   renderTeacherTasks();
+  if (name === 'contacts') renderTeacherContacts();
+};
+
+// ── CLASS MANAGEMENT ──
+// 某位老師今天對這個班級是否有存取權
+// 主導老師永遠有；共同授課無期限；職務代理只在起訖日之間有效
+function hasClassAccess(cls, userId, iso) {
+  if (cls.teacherId === userId) return true;
+  const m = (cls.members || []).find(x => x.teacherId === userId);
+  if (!m) return false;
+  if (m.type !== 'sub') return true;
+  const d = iso || todayISO();
+  return (!m.from || m.from <= d) && (!m.to || d <= m.to);
+}
+
+async function loadClasses() {
+  try {
+    // 兩個查詢：我主導的 + 我是成員的（Firestore 沒有 OR，只能分開撈再合併）
+    const [ownSnap, memberSnap] = await Promise.all([
+      getDocs(query(collection(db,'classes'), where('teacherId','==',currentUser.id))),
+      getDocs(query(collection(db,'classes'), where('memberIds','array-contains',currentUser.id)))
+        .catch(() => ({ docs: [] }))
+    ]);
+    const byId = {};
+    [...ownSnap.docs, ...memberSnap.docs].forEach(d => { byId[d.id] = {_id:d.id, ...d.data()}; });
+
+    myClasses = Object.values(byId)
+      .filter(c => !c.archived)
+      .filter(c => hasClassAccess(c, currentUser.id))
+      .sort((a,b) => (a.createdAt||0)-(b.createdAt||0));
+    refreshClassSelect();
+  } catch(e) { console.error('loadClasses:', e); }
+}
+
+function refreshClassSelect() {
+  const sel = document.getElementById('journalClassSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">-- 請選擇班級 --</option>' +
+    myClasses.map(c => `<option value="${c._id}">${c.name}（${c.students.length}人）</option>`).join('');
+  // If only one class, auto-select and trigger form after DOM settles
+  if (myClasses.length === 1) {
+    sel.value = myClasses[0]._id;
+    setTimeout(() => {
+      _lastSelectedClassId = null;
+      onClassSelect();
+    }, 150);
+  }
+}
+
+function renderClassList() {
+  const el = document.getElementById('classList');
+  if (!myClasses.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">🏫</div><div>還沒有班級</div></div>';
+    return;
+  }
+  el.innerHTML = myClasses.map(c => `
+    <div class="class-card">
+      <div style="flex:1">
+        <div class="class-name">${c.name}</div>
+        <div class="class-meta">${c.students.length}人：${c.students.slice(0,5).join('、')}${c.students.length>5?'…':''}</div>
+        ${c.teacherId !== currentUser.id ? '<div style="font-size:11px;color:var(--purple);margin-top:3px">👥 協作班級</div>' : ''}
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="openClassModal('${c._id}')">✏️ 編輯</button>
+        <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="deleteClass('${c._id}','${c.name}')">🗑</button>
+      </div>
+    </div>`).join('');
+}
+
+window.openClassModal = function(classId) {
+  const cls = classId ? myClasses.find(c => c._id === classId) : null;
+  document.getElementById('classModalTitle').textContent = cls ? '編輯班級' : '新增班級';
+  document.getElementById('editClassId').value = classId || '';
+  document.getElementById('className').value = cls?.name || '';
+  const list = document.getElementById('classStudentList');
+  list.innerHTML = '';
+  (cls?.students || ['','']).forEach(s => addClassStudentRow(s));
+  document.getElementById('classModal').classList.add('show');
+};
+window.closeClassModal = function() { document.getElementById('classModal').classList.remove('show'); };
+window.addClassStudent = function() { addClassStudentRow(''); };
+
+function addClassStudentRow(val='') {
+  const row = document.createElement('div');
+  row.className = 'student-build-row';
+  row.innerHTML = `<input class="student-build-input" placeholder="學生姓名" value="${val}" onkeydown="if(event.key==='Enter'){event.preventDefault();addClassStudent();}">
+    <button class="btn-del" onclick="this.parentElement.remove()">✕</button>`;
+  document.getElementById('classStudentList').appendChild(row);
+  if (!val) row.querySelector('input').focus();
+}
+
+window.saveClass = async function() {
+  const name = document.getElementById('className').value.trim();
+  if (!name) { showToast('請輸入班級名稱','error'); return; }
+  const students = [...document.querySelectorAll('.student-build-input')].map(i=>i.value.trim()).filter(Boolean);
+  if (!students.length) { showToast('請至少新增一位學生','error'); return; }
+  const classId = document.getElementById('editClassId').value;
+  showLoading('儲存班級...');
+  try {
+    if (classId) {
+      await updateDoc(doc(db,'classes',classId), {name, students});
+      const idx = myClasses.findIndex(c => c._id === classId);
+      if (idx >= 0) myClasses[idx] = {...myClasses[idx], name, students};
+    } else {
+      const ref = await addDoc(collection(db,'classes'), {teacherId:currentUser.id, name, students, createdAt:Date.now()});
+      myClasses.push({_id:ref.id, teacherId:currentUser.id, name, students, createdAt:Date.now()});
+    }
+    closeClassModal(); refreshClassSelect(); renderClassList();
+    showToast('✅ 班級已儲存');
+  } catch(e) { showToast('❌ '+e.message,'error'); }
+  hideLoading();
+};
+
+window.deleteClass = async function(id, name) {
+  const cls = myClasses.find(c => c._id === id);
+  if (cls && cls.teacherId !== currentUser.id) {
+    showToast('這是協作班級，只有主要負責老師能刪除','error');
+    return;
+  }
+  if (!confirm(`確定刪除班級「${name}」？`)) return;
+  showLoading('刪除中...');
+  try {
+    await deleteDoc(doc(db,'classes',id));
+    myClasses = myClasses.filter(c => c._id !== id);
+    refreshClassSelect(); renderClassList(); showToast('🗑 已刪除');
+  } catch(e) { showToast('❌ '+e.message,'error'); }
+  hideLoading();
+};
+
+// ── JOURNAL FORM ──
+window.onClassSelect = function() {
+  const id  = document.getElementById('journalClassSelect').value;
+  if (!id) { document.getElementById('journalForm').style.display='none'; _lastSelectedClassId=null; return; }
+  if (id === _lastSelectedClassId) return; // already loaded
+  _lastSelectedClassId = id;
+  const cls = myClasses.find(c => c._id === id);
+  if (!cls) { document.getElementById('journalForm').style.display='none'; return; }
+
+  currentStudents = [...cls.students];
+  attendance  = {}; homework = {}; classRating = {};
+  currentStudents.forEach(s => { attendance[s]='present'; homework[s]='good'; classRating[s]=0; });
+  exams=[{id:0,range:'',mode:'score',maxScore:100,scores:{}}];
+  examIdCounter=1;
+
+  // Auto-fill today
+  const now = new Date();
+  const mm  = String(now.getMonth()+1).padStart(2,'0');
+  const dd  = String(now.getDate()).padStart(2,'0');
+  const fDate = document.getElementById('fDate');
+  const fWeekday = document.getElementById('fWeekday');
+  if (fDate) fDate.value = `${mm}/${dd}`;
+  if (fWeekday) fWeekday.value = ['日','一','二','三','四','五','六'][now.getDay()];
+  ['fProgress','fHomework','fNextExam','fNotes'].forEach(fid => {
+    const el = document.getElementById(fid);
+    if (el) el.value = '';
+  });
+
+  const selInfo = document.getElementById('selectedClassInfo');
+  const journalForm = document.getElementById('journalForm');
+  if (selInfo) { selInfo.style.display='block'; selInfo.textContent=`班級：${cls.name}　學生：${cls.students.join('、')}`; }
+  if (journalForm) journalForm.style.display = 'block';
+
+  renderAttendance(); renderHomework(); renderRatingGrid(); renderExams();
+};
+
+// ── MULTI-EXAM SYSTEM ──
+let examIdCounter = 1;
+
+function renderAttendance() {
+  const el = document.getElementById('attendanceGrid');
+  if (!el) return;
+  el.innerHTML = currentStudents.map(s => `
+    <div class="att-chip ${ATT_CLASSES[attendance[s]||'present']}" onclick="cycleAtt('${s}')">
+      <span class="chip-name">${s}</span>
+      <span class="att-status">${ATT_LABELS[attendance[s]||'present']}</span>
+    </div>`).join('');
+}
+window.cycleAtt = function(s) {
+  const idx = ATT_STATES.indexOf(attendance[s]||'present');
+  attendance[s] = ATT_STATES[(idx+1) % ATT_STATES.length];
+  renderAttendance();
+};
+
+function renderHomework() {
+  const el = document.getElementById('homeworkGrid');
+  if (!el) return;
+  el.innerHTML = currentStudents.map(s => {
+    const st = hwVal(homework[s]);
+    return `<div class="att-chip ${HW_CLASSES[st]}" onclick="cycleHw('${s}')">
+      <span class="chip-name">${s}</span>
+      <span class="att-status">${HW_LABELS[st]}</span>
+    </div>`;
+  }).join('');
+}
+window.cycleHw = function(s) {
+  const idx = HW_STATES.indexOf(hwVal(homework[s]));
+  homework[s] = HW_STATES[(idx+1) % HW_STATES.length];
+  renderHomework();
+};
+
+function renderRatingGrid() {
+  const el = document.getElementById('ratingGrid');
+  if (!el) return;
+  el.innerHTML = currentStudents.map(s => {
+    const r = classRating[s] || 0;
+    return `<div class="rating-row">
+      <span class="rating-name">${s}</span>
+      <div class="rating-stars">
+        ${[1,2,3,4,5].map(i=>`<button class="star-btn ${i<=r?'active':''}" onclick="setRating('${s}',${i})" title="${RATING_LABELS[i]}">⭐</button>`).join('')}
+      </div>
+      <span class="rating-label" style="color:${r?RATING_COLORS[r]:'var(--muted)'}">${r?r+'分':'-'}</span>
+    </div>`;
+  }).join('');
+}
+window.setRating = function(s, val) {
+  classRating[s] = classRating[s] === val ? 0 : val;
+  renderRatingGrid();
+};
+
+window.addExam = function() {
+  exams.push({id:examIdCounter++, range:'', mode:'score', maxScore:100, scores:{}});
+  renderExams();
+};
+window.removeExam = function(id) {
+  if (exams.length<=1){showToast('至少保留一筆考試記錄','error');return;}
+  exams = exams.filter(e=>e.id!=id);
+  renderExams();
+};
+window.toggleExamMode = function(id, mode) {
+  const ex=exams.find(e=>e.id==id);
+  if(ex){ex.mode=mode;renderExams();}
+};
+
+function renderExams() {
+  const container=document.getElementById('examsContainer');
+  if(!container)return;
+  container.innerHTML=exams.map((ex,ei)=>{
+    const isGrade=ex.mode==='grade';
+    const rows=currentStudents.map((s,si)=>{
+      const val=ex.scores[s]||'';
+      const input=isGrade
+        ? `<select id="ex_${ex.id}_${si}" style="width:90px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:14px;cursor:pointer;outline:none" onchange="updateExamScore(${ex.id},${si})"><option value="">—</option>${GRADES.map(g=>`<option value="${g}"${g===val?' selected':''}>${g}</option>`).join('')}</select>`
+        : `<input type="number" id="ex_${ex.id}_${si}" value="${val}" placeholder="—" min="0" style="width:72px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:14px;text-align:center;outline:none" oninput="updateExamScore(${ex.id},${si})">`;
+      const d=getExamDisplay(val,ex.mode,ex.maxScore);
+      return `<tr><td style="font-weight:700;padding:8px 10px;border:1px solid var(--border)">${s}</td><td style="padding:6px 10px;border:1px solid var(--border)">${input}</td><td id="ex_disp_${ex.id}_${si}" style="padding:8px 10px;border:1px solid var(--border);font-size:12px;font-weight:700;color:${d.color}">${d.text}</td></tr>`;
+    }).join('');
+    return `<div class="exam-block">
+      <div class="exam-header">
+        <span class="exam-label">📋 考試 ${ei+1}</span>
+        <input value="${ex.range||''}" placeholder="考試範圍（例：Unit 3 單字）"
+          style="flex:1;min-width:140px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:7px 10px;color:var(--text);font-family:inherit;font-size:13px;outline:none"
+          onblur="exams.find(e=>e.id===${ex.id}).range=this.value" onkeydown="if(event.key==='Enter')this.blur()">
+        <div style="display:flex;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:2px">
+          <button onclick="toggleExamMode(${ex.id},'score')" style="${!isGrade?'background:linear-gradient(135deg,var(--teal),#2ecc71);color:#0d1117;':'background:none;color:var(--muted);'}padding:5px 10px;border:none;border-radius:6px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer">🔢 分數</button>
+          <button onclick="toggleExamMode(${ex.id},'grade')" style="${isGrade?'background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;':'background:none;color:var(--muted);'}padding:5px 10px;border:none;border-radius:6px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer">🅰 等第</button>
+        </div>
+        ${!isGrade?`<div style="display:flex;align-items:center;gap:4px"><span style="font-size:11px;color:var(--muted)">滿分</span><input type="number" id="exmax_${ex.id}" value="${ex.maxScore}" min="1" max="9999" style="width:72px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:13px;text-align:center;outline:none" oninput="onExMaxChange(${ex.id})"><span style="font-size:11px;color:var(--muted)">分</span></div>`:''}
+        ${exams.length>1?`<button onclick="removeExam(${ex.id})" style="background:rgba(255,107,107,.15);border:1px solid rgba(255,107,107,.3);border-radius:8px;padding:5px 10px;color:var(--red);font-family:inherit;font-size:11px;font-weight:700;cursor:pointer">✕</button>`:''}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:rgba(255,255,255,.05)">
+          <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">學生</th>
+          <th style="padding:8px;border:1px solid var(--border)">${isGrade?'等第':`<span id="exhdr_${ex.id}">成績（/${ex.maxScore}）</span>`}</th>
+          <th style="padding:8px;border:1px solid var(--border)">結果</th>
+        </tr></thead><tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+window.onExMaxChange = function(examId) {
+  const maxEl = document.getElementById('exmax_'+examId);
+  const ex = exams.find(e=>e.id==examId); // == not === to handle string/number
+  if (!maxEl || !ex) return;
+  const newMax = parseFloat(maxEl.value) || 100;
+  ex.maxScore = newMax;
+  // Update header text
+  const hdr = document.getElementById('exhdr_'+examId);
+  if (hdr) hdr.textContent = '成績（/'+newMax+'）';
+  // Update all score percentages without re-render
+  currentStudents.forEach((s,si) => {
+    const el  = document.getElementById(`ex_${examId}_${si}`);
+    const out = document.getElementById(`ex_disp_${examId}_${si}`);
+    if (!el || !out || !el.value) return;
+    const pct = Math.round(parseFloat(el.value)/newMax*100);
+    if (isNaN(pct)) return;
+    out.textContent = pct+'%';
+    out.style.color = pct>=90?'var(--teal)':pct>=60?'var(--yellow)':'var(--red)';
+  });
+};
+
+window.updateExamScore = function(examId, si) {
+  const ex=exams.find(e=>e.id==examId);
+  const el=document.getElementById(`ex_${examId}_${si}`);
+  const out=document.getElementById(`ex_disp_${examId}_${si}`);
+  if(!ex||!el||!out)return;
+  const val=el.value;
+  ex.scores[currentStudents[si]]=val;
+  const d=getExamDisplay(val,ex.mode,ex.maxScore);
+  out.textContent=d.text; out.style.color=d.color;
+};
+
+function renderExamRows(examList, sts) {
+  return (examList||[]).map((ex,ei) => {
+    const scored = sts.filter(s => ex.scores?.[s]!==''&&ex.scores?.[s]!=null);
+    if (!scored.length) return '';
+    const label = ex.range||('考試'+(ei+1));
+    const tags  = scored.map(s => {
+      const v       = ex.scores[s];
+      const isGrade = GRADES.includes(String(v));
+      if (isGrade) {
+        const col = GRADE_COLORS[v]||'var(--text)';
+        return '<span class="tag" style="background:rgba(255,255,255,.07);color:'+col+'">'+s+'：'+v+'</span>';
+      }
+      const pct = Math.round(parseFloat(v)/(ex.maxScore||100)*100);
+      const tc  = pct>=90?'tag-green':pct>=60?'tag-yellow':'tag-red';
+      return '<span class="tag '+tc+'">'+s+'：'+v+'/'+(ex.maxScore||100)+'（'+pct+'%）</span>';
+    }).join('');
+    return '<div class="detail-row"><div class="detail-label">'+label+'</div><div class="detail-value">'+tags+'</div></div>';
+  }).join('');
+}
+
+function getExamDisplay(val, mode, maxScore) {
+  if (!val) return {text:'—', color:'var(--muted)'};
+  if (mode==='grade') return {text:val, color:GRADE_COLORS[val]||'var(--text)'};
+  const pct = Math.round(parseFloat(val)/(maxScore||100)*100);
+  if (isNaN(pct)) return {text:'—', color:'var(--muted)'};
+  return {text:pct+'%', color:pct>=90?'var(--teal)':pct>=60?'var(--yellow)':'var(--red)'};
+}
+
+// legacy stubs
+function getScores(){return {};}
+function setScores(){}
+window.updateScoreHeader=function(){};
+window.toggleScoreMode=function(){};
+function updateScoreModeUI(){}
+window.updateScorePct=window.updateScoreDisplay=function(){};
+
+// ── SAVE ENTRY ──
+window.saveEntry = async function() {
+  const clsId = document.getElementById('journalClassSelect').value;
+  const cls   = myClasses.find(c => c._id === clsId);
+  const date  = document.getElementById('fDate')?.value.trim();
+  if (!cls)  { showToast('請選擇班級','error'); return; }
+  if (!date) { showToast('請填寫日期','error'); return; }
+
+  const entry = {
+    teacherId:currentUser.id, teacherName:currentUser.name,
+    classId:clsId, className:cls.name,
+    date,
+    weekday: document.getElementById('fWeekday')?.value||'',
+    students:[...currentStudents],
+    attendance:{...attendance}, homework:{...homework},
+    exams:exams.map(ex=>({...ex, scores:{...ex.scores}})),
+    classRating:{...classRating},
+    todayProgress: document.getElementById('fProgress')?.value||'',
+    todayHomework: document.getElementById('fHomework')?.value||'',
+    nextExam:      document.getElementById('fNextExam')?.value||'',
+    notes:         document.getElementById('fNotes')?.value||'',
+    savedAt:Date.now()
+  };
+
+  showLoading('儲存至雲端...');
+  try {
+    const existing = entries.find(e => e.date===date && e.classId===clsId);
+    if (existing?._id) {
+      // 共用日誌：保留原始填寫者，另外記錄最後編輯者，避免歸屬被協作老師覆蓋
+      const patch = { ...entry };
+      if (existing.teacherId && existing.teacherId !== currentUser.id) {
+        patch.teacherId      = existing.teacherId;
+        patch.teacherName    = existing.teacherName;
+        patch.lastEditedBy   = currentUser.id;
+        patch.lastEditedName = currentUser.name;
+      }
+      await updateDoc(doc(db,'entries',existing._id), patch);
+    } else {
+      await addDoc(collection(db,'entries'), entry);
+    }
+    showToast('☁️ 已儲存至雲端！');
+    document.getElementById('journalClassSelect').value = '';
+    _lastSelectedClassId = null;
+    document.getElementById('journalForm').style.display = 'none';
+    document.getElementById('selectedClassInfo').style.display = 'none';
+    await loadEntries(true);
+  } catch(e) { showToast('❌ '+e.message,'error'); }
+  hideLoading();
+};
+
+// ── LOAD ENTRIES ──
+// 老師端讀取快取：同一份資料 CACHE_TTL 內不重撈（切 tab 不會每次打 Firestore）；
+// 自己寫入後以 force=true 強制重撈；header 的 🔄 會清快取
+const CACHE_TTL = 60 * 1000;
+const _cacheAt = {};
+function cacheFresh(key) { return (Date.now() - (_cacheAt[key] || 0)) < CACHE_TTL; }
+function cacheMark(key) { _cacheAt[key] = Date.now(); }
+window.invalidateCache = function(...keys) { (keys.length ? keys : Object.keys(_cacheAt)).forEach(k => delete _cacheAt[k]); };
+window.teacherRefresh = async function() {
+  invalidateCache();
+  showLoading('重新載入...');
+  try {
+    await loadClasses(); await loadEntries(true);
+    const active = document.querySelector('#appPage .tab.active');
+    if (active) active.click();
+    showToast('🔄 已更新');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+async function loadEntries(force) {
+  if (!force && cacheFresh('entries')) return;
+  try {
+    const byId = {};
+    // 自己寫的日誌
+    const mine = await getDocs(query(collection(db,'entries'), where('teacherId','==',currentUser.id)));
+    mine.docs.forEach(d => { byId[d.id] = {_id:d.id, ...d.data()}; });
+
+    // 共同負責班級中，其他老師寫的日誌（一天一筆、兩人共用）
+    const sharedIds = myClasses
+      .filter(c => c.teacherId !== currentUser.id || (c.memberIds||[]).length)
+      .map(c => c._id);
+    // Firestore 的 in 查詢一次最多 30 個值，分批送
+    for (let i = 0; i < sharedIds.length; i += 30) {
+      const batch = sharedIds.slice(i, i + 30);
+      if (!batch.length) continue;
+      const snap = await getDocs(query(collection(db,'entries'), where('classId','in',batch)));
+      snap.docs.forEach(d => { byId[d.id] = {_id:d.id, ...d.data()}; });
+    }
+
+    entries = Object.values(byId).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+    cacheMark('entries');
+  } catch(e) { console.error('loadEntries:', e); }
+}
+
+// ── HISTORY ──
+// 歷史紀錄上方列出與我有關的停課記錄（供查詢用，不混進日誌統計）
+function renderClosureCards() {
+  const box = document.getElementById('historyClosures');
+  if (!box) return;
+  const myIds = myClasses.map(c => c._id);
+  const mine = closures
+    .filter(c => c.status !== 'rejected')
+    .filter(c => c.scope === 'all' || (c.classIds||[]).some(id => myIds.includes(id)));
+  if (!mine.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">🚫 停課記錄</div>
+    ${mine.slice(0,10).map(c => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:rgba(255,255,255,.04);border:1px dashed var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap">
+        <div>
+          <span style="font-size:13px;font-weight:700">${closureRangeText(c)}</span>
+          <span style="font-size:12px;color:var(--muted);margin-left:8px">${esc(closureScopeText(c))}　${esc(c.reason||'')}</span>
+        </div>
+        ${c.status==='pending' ? '<span style="background:rgba(255,209,102,.15);color:var(--yellow);border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700">待確認</span>' : ''}
+      </div>`).join('')}
+    <div style="height:14px"></div>`;
+}
+
+function renderHistory() {
+  const el = document.getElementById('historyList');
+  if (!entries.length) { el.innerHTML='<div class="empty"><div class="empty-icon">📭</div><div>還沒有日誌記錄</div></div>'; return; }
+  renderClosureCards();
+  el.innerHTML = entries.map((e,i) => {
+    const sts = e.students||[];
+    const attMap = e.attendance||{};
+    const hwMiss    = sts.filter(s => hwVal(e.homework?.[s])!=='good');
+    const absentCount = sts.filter(s => normAtt(attMap[s])==='absent').length;
+    const lateCount   = sts.filter(s => attMap[s]==='late').length;
+    const entryExams  = e.exams?.length ? e.exams : (Object.keys(e.scores||{}).some(k=>e.scores[k]!==''&&e.scores[k]!=null) ? [{id:0,range:'',mode:'score',maxScore:e.maxScore||100,scores:e.scores||{}}] : []);
+    const hasScores   = entryExams.some(ex=>sts.some(s=>ex.scores?.[s]!==''&&ex.scores?.[s]!=null));
+    const ratingMap   = e.classRating||{};
+    const ratedStudents = sts.filter(s => ratingMap[s]>0);
+    const avgRating   = ratedStudents.length ? (ratedStudents.reduce((a,s)=>a+(ratingMap[s]||0),0)/ratedStudents.length).toFixed(1) : null;
+    return `<div class="entry-card">
+      <div class="entry-header" onclick="toggleE(${i})">
+        <div>
+          <span class="entry-date">${e.date}</span>
+          <span style="font-size:12px;color:var(--muted);margin-left:8px">星期${e.weekday}</span><br>
+          <span style="font-size:13px;color:var(--purple);font-weight:700">${e.className||''}</span>
+          ${e.teacherId && e.teacherId !== currentUser.id
+            ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">· ${esc(e.teacherName||'')} 填寫</span>` : ''}
+          ${e.lastEditedBy && e.lastEditedBy !== e.teacherId
+            ? `<span style="font-size:11px;color:var(--muted);margin-left:4px">（${esc(e.lastEditedName||'')} 修改）</span>` : ''}
+        </div>
+        <div class="entry-badges">
+          ${absentCount?`<span class="ebadge ebadge-red">曠課${absentCount}</span>`:''}
+          ${lateCount?`<span class="ebadge ebadge-orange">遲到${lateCount}</span>`:''}
+          ${hwMiss.length?`<span class="ebadge ebadge-yellow">作業${hwMiss.length}人</span>`:''}
+          ${hasScores?`<span class="ebadge ebadge-teal">考試${entryExams.filter(ex=>sts.some(s=>ex.scores?.[s])).length}次</span>`:''}
+          ${avgRating?`<span class="ebadge" style="background:rgba(255,209,102,.2);color:var(--yellow)">⭐${avgRating}</span>`:''}
+          <span class="chevron" id="chev-${i}">▼</span>
+        </div>
+      </div>
+      <div class="entry-body" id="body-${i}">
+        <div class="detail-row"><div class="detail-label">出勤</div><div class="detail-value">${sts.map(s=>`<span class="tag ${ATT_TAG[normAtt(attMap[s])]}">${s}：${ATT_LABELS[normAtt(attMap[s])]}</span>`).join('')}</div></div>
+        <div class="detail-row"><div class="detail-label">作業</div><div class="detail-value">${sts.map(s=>{const hw=hwVal(e.homework?.[s]);const cls=hw==='good'?'tag-green':hw==='partial'?'tag-yellow':'tag-red';return `<span class="tag ${cls}">${s}：${HW_LABELS[hw]}</span>`;}).join('')}</div></div>
+        ${ratedStudents.length?`<div class="detail-row"><div class="detail-label">上課評分</div><div class="detail-value">${ratedStudents.map(s=>{const r=ratingMap[s];return `<span class="tag" style="background:rgba(255,255,255,.07);color:${RATING_COLORS[r]}">${s}：${'⭐'.repeat(r)}（${r}分）</span>`;}).join('')}</div></div>`:''}
+        ${hasScores?renderExamRows(entryExams,sts):''}
+        ${e.todayProgress?`<div class="detail-row"><div class="detail-label">進度</div><div class="detail-value">${e.todayProgress}</div></div>`:''}
+        ${e.todayHomework?`<div class="detail-row"><div class="detail-label">作業</div><div class="detail-value">${e.todayHomework}</div></div>`:''}
+        ${e.nextExam?`<div class="detail-row"><div class="detail-label">考試</div><div class="detail-value" style="color:var(--red);font-weight:700">${e.nextExam}</div></div>`:''}
+        ${e.notes?`<div class="detail-row"><div class="detail-label">備註</div><div class="detail-value" style="color:var(--muted)">${e.notes}</div></div>`:''}
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="editEntry(${i})">✏️ 編輯</button>
+          <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="delEntry(${i})">🗑 刪除</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+window.toggleE = i => {
+  document.getElementById('body-'+i).classList.toggle('open');
+  document.getElementById('chev-'+i).classList.toggle('open');
+};
+window.editEntry = function(i) {
+  const e   = entries[i];
+  const cls = myClasses.find(c => c._id === e.classId);
+  document.getElementById('journalClassSelect').value = e.classId||'';
+  _lastSelectedClassId = null; // allow re-render
+  if (cls) {
+    currentStudents = [...cls.students];
+    attendance  = {...(e.attendance||{})};
+    homework    = {...(e.homework||{})};
+    classRating = {...(e.classRating||{})};
+    document.getElementById('selectedClassInfo').style.display = 'block';
+    document.getElementById('selectedClassInfo').textContent = `班級：${cls.name}　學生：${cls.students.join('、')}`;
+    document.getElementById('journalForm').style.display = 'block';
+    renderAttendance(); renderHomework(); renderRatingGrid();
+    exams=(e.exams||[{id:0,range:'',mode:'score',maxScore:e.maxScore||100,scores:e.scores||{}}]).map((ex,i)=>({...ex,id:i}));
+    examIdCounter=exams.length;
+    renderExams();
+  }
+  const setVal = (id, val) => { const el=document.getElementById(id); if(el) el.value=val||''; };
+  setVal('fDate',       e.date);
+  setVal('fWeekday',    e.weekday);
+  setVal('fProgress',   e.todayProgress);
+  setVal('fHomework',   e.todayHomework);
+  setVal('fNextExam',   e.nextExam);
+  setVal('fNotes',      e.notes);
+  document.querySelectorAll('#appPage .tab')[0].click();
+  window.scrollTo(0,0);
+};
+window.delEntry = async function(i) {
+  if (!confirm('確定刪除此日誌？')) return;
+  showLoading('刪除中...');
+  try { await deleteDoc(doc(db,'entries',entries[i]._id)); showToast('🗑 已刪除'); await loadEntries(true); renderHistory(); }
+  catch(e) { showToast('❌ 刪除失敗','error'); }
+  hideLoading();
+};
+
+// ── REPORT ──
+window.switchReportMode = function(mode) {
+  const isClass = mode==='class';
+  document.getElementById('reportModeClass').style.display   = isClass ? 'block':'none';
+  document.getElementById('reportModeStudent').style.display = isClass ? 'none':'block';
+  document.getElementById('modeClassBtn').style.cssText   = isClass ? 'flex:1;padding:9px;border:none;border-radius:9px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,var(--teal),#2ecc71);color:#0d1117;' : 'flex:1;padding:9px;border:none;border-radius:9px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:none;color:var(--muted);';
+  document.getElementById('modeStudentBtn').style.cssText = !isClass? 'flex:1;padding:9px;border:none;border-radius:9px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;' : 'flex:1;padding:9px;border:none;border-radius:9px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:none;color:var(--muted);';
+  if (!isClass) renderStudentQuickPick();
+};
+
+function renderReportClassList() {
+  const el = document.getElementById('reportClassList');
+  if (!myClasses.length) { el.innerHTML='<div style="color:var(--muted);font-size:13px">請先在「班級管理」新增班級</div>'; return; }
+  el.innerHTML = myClasses.map(c => `
+    <label class="class-check" id="cc_${c._id}" onclick="toggleClassCheck('${c._id}')">
+      <input type="checkbox" value="${c._id}" onchange="toggleClassCheck('${c._id}')">
+      <span class="class-check-label">${c.name}</span>
+    </label>`).join('');
+}
+window.toggleClassCheck = function(id) {
+  const el = document.getElementById('cc_'+id);
+  const cb = el.querySelector('input');
+  cb.checked = !cb.checked;
+  el.classList.toggle('checked', cb.checked);
+};
+
+function renderStudentQuickPick() {
+  const allNames = [...new Set(entries.flatMap(e => e.students||[]))].sort();
+  const el = document.getElementById('studentQuickPick');
+  if (!allNames.length) { el.innerHTML='<span style="color:var(--muted);font-size:13px">尚無學生資料</span>'; return; }
+  el.innerHTML = allNames.map(n => `
+    <button onclick="selectStudent('${n}')" style="background:var(--surface3);border:1px solid var(--border);border-radius:20px;padding:5px 14px;color:var(--text);font-family:inherit;font-size:13px;cursor:pointer;"
+      onmouseover="this.style.borderColor='var(--teal)';this.style.color='var(--teal)'"
+      onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text)'">${n}</button>`).join('');
+}
+window.selectStudent = function(name) { document.getElementById('studentSearchInput').value=name; generateStudentReport(); };
+window.onStudentInputChange = function() {
+  const q = document.getElementById('studentSearchInput').value.trim();
+  document.querySelectorAll('#studentQuickPick button').forEach(b => { b.style.display=(!q||b.textContent.includes(q))?'':'none'; });
+};
+
+function parseMMDD(str) {
+  if (!str) return null;
+  const p = str.replace(/\//g,'-').split('-');
+  return p.length<3 ? null : `${p[1].padStart(2,'0')}/${p[2].padStart(2,'0')}`;
+}
+function entryDateToMMDD(d) {
+  if (!d) return null;
+  if (d.includes('/')) { const p=d.split('/'); return `${p[0].padStart(2,'0')}/${p[1].padStart(2,'0')}`; }
+  const s=d.padStart(4,'0'); return `${s.slice(0,2)}/${s.slice(2,4)}`;
+}
+
+window.generateReport = function() {
+  const startStr = document.getElementById('reportStart').value;
+  const endStr   = document.getElementById('reportEnd').value;
+  if (!startStr||!endStr) { showToast('請選擇日期範圍','error'); return; }
+  const selectedClasses = [...document.querySelectorAll('#reportClassList input:checked')].map(cb=>cb.value);
+  if (!selectedClasses.length) { showToast('請至少選擇一個班級','error'); return; }
+  const showAtt = document.getElementById('rptAttendance').checked;
+  const showHw  = document.getElementById('rptHomework').checked;
+  const showSc  = document.getElementById('rptScores').checked;
+
+  const startMMDD = parseMMDD(startStr);
+  const endMMDD   = parseMMDD(endStr);
+
+  const filtered = entries.filter(e => {
+    if (!selectedClasses.includes(e.classId)) return false;
+    const d = entryDateToMMDD(e.date);
+    return d && d>=startMMDD && d<=endMMDD;
+  });
+
+  const outEl = document.getElementById('reportOutput');
+  if (!filtered.length) {
+    outEl.innerHTML = `<div style="color:var(--muted);padding:20px;text-align:center;">此範圍內無資料（${startMMDD}～${endMMDD}）</div>`;
+    outEl.classList.add('show'); return;
+  }
+
+  const byClass = {};
+  filtered.forEach(e => {
+    if (!byClass[e.classId]) byClass[e.classId]={name:e.className,entries:[]};
+    byClass[e.classId].entries.push(e);
+  });
+
+  let html='';
+  Object.values(byClass).forEach(cls => {
+    const es = cls.entries.sort((a,b)=>a.date.localeCompare(b.date));
+    const dates = es.map(e=>e.date);
+    const allStudents = [...new Set(es.flatMap(e=>e.students||[]))];
+
+    html += `<div style="margin-bottom:24px"><div style="font-size:18px;font-weight:900;color:var(--purple);margin-bottom:14px">🏫 ${cls.name}</div>`;
+
+    if (showAtt) {
+      html += buildAttTable(es, dates, allStudents);
+    }
+    if (showHw) {
+      html += buildHwTable(es, dates, allStudents);
+    }
+    if (showSc) {
+      const scoreEntries = es.filter(e=>allStudents.some(s=>e.scores?.[s]!==''&&e.scores?.[s]!=null));
+      if (scoreEntries.length) html += buildScoreTable(scoreEntries, allStudents);
+    }
+    html += `</div><hr style="border-color:var(--border);margin:20px 0">`;
+  });
+
+  document.getElementById('printArea').innerHTML = `<div style="font-family:'Noto Sans TC',sans-serif;padding:20px;color:#000;background:#fff;">${html}</div>`;
+  outEl.innerHTML = html;
+  outEl.classList.add('show');
+  showToast('✅ 報表已產生');
+};
+
+function buildAttTable(es, dates, students) {
+  const attBg={present:'rgba(86,204,178,.25)',late:'rgba(255,159,67,.25)',sick:'rgba(86,130,204,.25)',leave:'rgba(192,132,252,.25)',absent:'rgba(255,107,107,.25)'};
+  let t=`<div style="margin-bottom:20px"><div style="font-size:14px;font-weight:700;color:var(--teal);margin-bottom:10px">👥 出勤記錄</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:rgba(255,255,255,.06)">
+      <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">學生</th>
+      ${dates.map(d=>`<th style="padding:8px 6px;border:1px solid var(--border);min-width:52px;text-align:center">${d}</th>`).join('')}
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">出勤</th>
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">缺課</th>
+    </tr></thead><tbody>`;
+  students.forEach(s => {
+    const stList = es.map(e=>normAtt(e.attendance?.[s]));
+    const pCount = stList.filter(st=>st==='present').length;
+    t += `<tr><td style="padding:8px 10px;border:1px solid var(--border);font-weight:700">${s}</td>
+      ${stList.map(st=>`<td style="padding:6px;border:1px solid var(--border);text-align:center;background:${attBg[st]};font-size:14px">${ATT_EMOJI[st]}</td>`).join('')}
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:#56ccb2">${pCount}</td>
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:${(es.length-pCount)>0?'#ff6b6b':'var(--muted)'}">${es.length-pCount}</td>
+    </tr>`;
+  });
+  return t+`</tbody></table></div></div>`;
+}
+
+function buildHwTable(es, dates, students) {
+  let t=`<div style="margin-bottom:20px"><div style="font-size:14px;font-weight:700;color:var(--teal);margin-bottom:10px">📝 作業繳交</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:rgba(255,255,255,.06)">
+      <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">學生</th>
+      ${dates.map(d=>`<th style="padding:8px 6px;border:1px solid var(--border);min-width:52px;text-align:center">${d}</th>`).join('')}
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">優良</th>
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">異常</th>
+    </tr></thead><tbody>`;
+  students.forEach(s => {
+    const hwList = es.map(e=>hwVal(e.homework?.[s]));
+    const done   = hwList.filter(h=>h==='good').length;
+    const miss   = es.length - done;
+    t += `<tr><td style="padding:8px 10px;border:1px solid var(--border);font-weight:700">${s}</td>
+      ${hwList.map(h=>{
+        const bg=h==='good'?'rgba(86,204,178,.2)':h==='partial'?'rgba(255,209,102,.2)':'rgba(255,107,107,.2)';
+        return `<td style="padding:6px;border:1px solid var(--border);text-align:center;background:${bg};font-size:14px">${HW_EMOJI[h]}</td>`;
+      }).join('')}
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:#56ccb2">${done}</td>
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:${miss>0?'#ff6b6b':'var(--muted)'}">${miss}</td>
+    </tr>`;
+  });
+  return t+`</tbody></table></div></div>`;
+}
+
+function buildScoreTable(scoreEntries, students) {
+  let t=`<div style="margin-bottom:20px"><div style="font-size:14px;font-weight:700;color:var(--teal);margin-bottom:10px">🏆 考試成績</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:rgba(255,255,255,.06)">
+      <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">學生</th>
+      ${scoreEntries.map(e=>`<th style="padding:8px 6px;border:1px solid var(--border);min-width:70px;text-align:center">${e.date}<br><span style="font-size:10px;color:var(--muted)">滿分${e.maxScore||100}</span></th>`).join('')}
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">平均%</th>
+    </tr></thead><tbody>`;
+  students.forEach(s => {
+    const pcts = scoreEntries.filter(e=>e.scores?.[s]!==''&&e.scores?.[s]!=null).map(e=>Math.round(e.scores[s]/(e.maxScore||100)*100));
+    const avg  = pcts.length ? Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length) : null;
+    const avgColor = avg===null?'var(--muted)':avg>=90?'#56ccb2':avg>=60?'#ffd166':'#ff6b6b';
+    t += `<tr><td style="padding:8px 10px;border:1px solid var(--border);font-weight:700">${s}</td>
+      ${scoreEntries.map(e=>{const v=e.scores?.[s];const has=v!==''&&v!=null;const pct=has?Math.round(v/(e.maxScore||100)*100):null;const bg=!has?'':pct>=90?'rgba(86,204,178,.25)':pct>=60?'rgba(255,209,102,.2)':'rgba(255,107,107,.25)';const tc=!has?'var(--muted)':pct>=90?'#56ccb2':pct>=60?'#ffd166':'#ff6b6b';return `<td style="padding:8px 6px;border:1px solid var(--border);text-align:center;background:${bg};color:${tc};font-weight:700">${has?`${v}<br><span style="font-size:10px">${pct}%</span>`:'—'}</td>`;}).join('')}
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:900;font-size:15px;color:${avgColor}">${avg!==null?avg+'%':'—'}</td>
+    </tr>`;
+  });
+  return t+`</tbody></table></div></div>`;
+}
+
+window.generateStudentReport = function() {
+  const name = document.getElementById('studentSearchInput').value.trim();
+  if (!name) { showToast('請輸入學生姓名','error'); return; }
+  const startMMDD = parseMMDD(document.getElementById('studentReportStart').value);
+  const endMMDD   = parseMMDD(document.getElementById('studentReportEnd').value);
+
+  const studentEntries = entries.filter(e => {
+    if (!(e.students||[]).includes(name)) return false;
+    if (startMMDD && endMMDD) { const d=entryDateToMMDD(e.date); return d&&d>=startMMDD&&d<=endMMDD; }
+    return true;
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+
+  const outEl = document.getElementById('studentReportOutput');
+  if (!studentEntries.length) { outEl.innerHTML=`<div style="color:var(--muted);padding:20px;text-align:center">找不到「${name}」的任何記錄</div>`; outEl.classList.add('show'); return; }
+
+  const byClass={};
+  studentEntries.forEach(e=>{const k=e.className||'未知';if(!byClass[k])byClass[k]=[];byClass[k].push(e);});
+  const totalPresent = studentEntries.filter(e=>normAtt(e.attendance?.[name])==='present').length;
+  const totalAbsent  = studentEntries.length-totalPresent;
+  const totalHwDone  = studentEntries.filter(e=>hwVal(e.homework?.[name])==='good').length;
+  const scoreList    = studentEntries.flatMap(e=>getStudentScores(e,name).filter(s=>s.mode!=='grade'));
+  const avgPct       = scoreList.length ? Math.round(scoreList.reduce((a,s)=>a+parseFloat(s.score)/s.max*100,0)/scoreList.length) : null;
+  const avgColor     = avgPct===null?'var(--muted)':avgPct>=90?'var(--teal)':avgPct>=60?'var(--yellow)':'var(--red)';
+  const ratingList   = studentEntries.filter(e=>(e.classRating||{})[name]>0);
+  const avgRating    = ratingList.length ? (ratingList.reduce((a,e)=>a+(e.classRating[name]||0),0)/ratingList.length).toFixed(1) : null;
+
+  let html=`<div style="background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.25);border-radius:14px;padding:18px;margin-bottom:18px">
+    <div style="font-size:22px;font-weight:900;color:var(--purple);margin-bottom:6px">👤 ${name}</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px">共 ${studentEntries.length} 筆記錄　跨 ${Object.keys(byClass).length} 個班級${startMMDD&&endMMDD?`　${startMMDD}～${endMMDD}`:'（全部時間）'}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:var(--teal)">${totalPresent}</div><div style="font-size:12px;color:var(--muted)">出勤次數</div></div>
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:${totalAbsent>0?'var(--red)':'var(--muted)'}">${totalAbsent}</div><div style="font-size:12px;color:var(--muted)">缺課次數</div></div>
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:${totalHwDone<studentEntries.length?'var(--yellow)':'var(--teal)'}">${totalHwDone}/${studentEntries.length}</div><div style="font-size:12px;color:var(--muted)">作業繳交</div></div>
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:${avgColor}">${avgPct!==null?avgPct+'%':'—'}</div><div style="font-size:12px;color:var(--muted)">平均成績%</div></div>
+      ${avgRating?`<div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:var(--yellow)">⭐${avgRating}</div><div style="font-size:12px;color:var(--muted)">平均上課評分</div></div>`:''}
+    </div>
+  </div>`;
+
+  Object.entries(byClass).forEach(([cls,es])=>{
+    html+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px">
+      <div style="font-size:15px;font-weight:900;color:var(--purple);margin-bottom:12px">🏫 ${cls}</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:rgba(255,255,255,.05)">
+          <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">日期</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">出勤</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">作業</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">成績</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">上課評分</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:left">進度</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:left">作業</th>
+        </tr></thead><tbody>`;
+    es.forEach(e=>{
+      const st     = normAtt(e.attendance?.[name]);
+      const hw     = hwVal(e.homework?.[name]);
+      const hwBg   = hw==='good'?'rgba(86,204,178,.15)':hw==='partial'?'rgba(255,209,102,.15)':'rgba(255,107,107,.15)';
+      const rating = (e.classRating||{})[name]||0;
+      const rColor = rating?RATING_COLORS[rating]:'var(--muted)';
+      html+=`<tr>
+        <td style="padding:8px 10px;border:1px solid var(--border);font-weight:700;white-space:nowrap">${e.date} 星期${e.weekday||''}</td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;background:${ATT_BG[st]}">${ATT_EMOJI[st]} <span style="font-size:11px">${ATT_LABELS[st]}</span></td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;background:${hwBg}">${HW_EMOJI[hw]} <span style="font-size:11px">${HW_LABELS[hw]}</span></td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;line-height:1.6">${renderScoreCell(e,name)}</td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:${rColor}">${rating?`${'⭐'.repeat(rating)} ${rating}分`:'—'}</td>
+        <td style="padding:8px;border:1px solid var(--border);font-size:12px;color:var(--muted)">${e.todayProgress||'—'}</td>
+        <td style="padding:8px;border:1px solid var(--border);font-size:12px;color:var(--muted)">${e.todayHomework||'—'}</td>
+      </tr>`;
+    });
+    html+=`</tbody></table></div></div>`;
+  });
+
+  document.getElementById('printArea').innerHTML=`<div style="font-family:'Noto Sans TC',sans-serif;padding:20px;color:#000;background:#fff"><h2>百宏文教機構 · 學生個人報表</h2><h3>${name}</h3><div style="font-size:12px;margin-bottom:16px">產生時間：${new Date().toLocaleString('zh-TW')}</div>${html}</div>`;
+  outEl.innerHTML=html;
+  outEl.classList.add('show');
+  showToast(`✅ 找到 ${name} 的 ${studentEntries.length} 筆記錄`);
+};
+
+window.printReport = function(outputId='reportOutput') {
+  const el = document.getElementById(outputId);
+  if (!el||!el.classList.contains('show')) { showToast('請先產生報表','error'); return; }
+  document.getElementById('printArea').style.display='block';
+  window.print();
+  setTimeout(()=>document.getElementById('printArea').style.display='none',1000);
+};
+
+// ── ADMIN ──
+window.adminSwitchTab = function(name, el) {
+  ['overview','entries','stats','student','alerts','schedule','classreport','promote','accounts','tasks','contacts'].forEach(t => document.getElementById('admin-tab-'+t).style.display='none');
+  document.querySelectorAll('#adminPage .tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('admin-tab-'+name).style.display='block';
+  el.classList.add('active');
+  if (name==='entries') {
+    if (!allEntries.length) {
+      adminLoadAll().then(() => { adminPopulateFilters(); adminRenderEntries(); });
+    } else {
+      adminPopulateFilters(); adminRenderEntries();
+    }
+  }
+  if (name==='stats')   adminRenderStats();
+  if (name==='accounts') { renderTeachers(); renderBackupAdmins(); }
+  if (name==='student') renderAdminStudentPick();
+  if (name==='schedule') { renderScheduleEditor(); renderExportPanel(); renderClosureAdmin().then(renderScheduleStatusBanner); }
+  if (name==='accounts') renderResetPanel().catch(e => console.error('renderResetPanel:', e));
+  if (name==='alerts') populateAlertFilters();
+  if (name==='classreport') populateClassReportSelect();
+  if (name==='promote') renderPromoteTab();
+  if (name==='tasks')   renderAdminTasks();
+  if (name==='contacts') renderAdminContacts();
+};
+
+async function adminLoadAll() {
+  showLoading('載入資料...');
+  try { const s=await getDocs(collection(db,'entries')); allEntries=s.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0)); } catch(e) { console.error(e); allEntries=[]; }
+  try { const s=await getDocs(collection(db,'teachers')); teachers=s.docs.map(d=>({_id:d.id,...d.data()})); } catch(e) { console.error(e); teachers=[]; }
+  // 提醒邏輯需要班級成員資料（共同授課／職務代理）
+  try { const s=await getDocs(collection(db,'classes')); allClasses=s.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||'')); } catch(e) { console.error(e); }
+  await loadSchedule();
+  await loadClosures();
+  // 電訪「需主管關注」未處理數（只撈旗標紀錄，很少）
+  try {
+    const fl = await getDocs(query(collection(db,'contacts'), where('flag','==',true)));
+    const n = fl.docs.filter(d => !d.data().flagResolvedAt).length;
+    const el = document.getElementById('ctFlagBadge');
+    if (el) { el.textContent = n ? `🚩 ${n}` : ''; el.style.display = n ? 'inline-block' : 'none'; }
+  } catch(e) { console.error('flag badge:', e); }
+  hideLoading();
+  adminRenderOverview(); adminPopulateFilters(); renderAdminStudentPick();
+  // Pre-fill check date with today
+  const today = new Date();
+  const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const checkDateEl = document.getElementById('checkDate');
+  if (checkDateEl) checkDateEl.value = todayISO;
+}
+window.adminRefresh = function() { adminLoadAll().then(()=>showToast('🔄 已更新')); };
+
+function adminRenderOverview() {
+  const totalAbsent  = allEntries.reduce((a,e)=>a+Object.values(e.attendance||{}).filter(v=>!v).length,0);
+  const totalHwMiss  = allEntries.reduce((a,e)=>a+Object.values(e.homework||{}).filter(v=>v===false).length,0);
+  document.getElementById('summaryGrid').innerHTML=`
+    <div class="summary-card"><div class="summary-num" style="color:var(--teal)">${allEntries.length}</div><div class="summary-lbl">日誌總數</div></div>
+    <div class="summary-card"><div class="summary-num" style="color:var(--purple)">${teachers.length}</div><div class="summary-lbl">老師</div></div>
+    <div class="summary-card"><div class="summary-num" style="color:var(--purple)">${allClasses.filter(c=>!c.archived).length}</div><div class="summary-lbl">班級</div></div>
+    <div class="summary-card"><div class="summary-num" style="color:var(--red)">${totalAbsent}</div><div class="summary-lbl">累計缺席</div></div>
+    <div class="summary-card"><div class="summary-num" style="color:var(--yellow)">${totalHwMiss}</div><div class="summary-lbl">累計未繳</div></div>`;
+  document.getElementById('recentList').innerHTML = allEntries.slice(0,8).map((e,i)=>adminEntryCard(e,'r'+i)).join('') || '<div class="empty"><div class="empty-icon">📭</div><div>尚無日誌</div></div>';
+  // Show today's schedule status in overview
+  renderScheduleStatusBanner();
+}
+
+function adminPopulateFilters() {
+  const names   = [...new Set(allEntries.map(e=>e.teacherName))].sort();
+  const classes = [...new Set(allEntries.map(e=>e.className).filter(Boolean))].sort();
+  const dates   = [...new Set(allEntries.map(e=>e.date))].sort().reverse();
+  document.getElementById('filterTeacher').innerHTML = '<option value="">所有老師</option>'+names.map(n=>`<option>${n}</option>`).join('');
+  document.getElementById('filterClass').innerHTML   = '<option value="">所有班級</option>'+classes.map(c=>`<option>${c}</option>`).join('');
+  document.getElementById('filterDate').innerHTML    = '<option value="">所有日期</option>'+dates.map(d=>`<option>${d}</option>`).join('');
+}
+
+async function populateClassReportSelect() {
+  const sel = document.getElementById('classReportSelect');
+  if (!sel) return;
+  // Merge from allEntries + allClasses (already loaded in renderPromoteTab)
+  // Also try to load from Firestore if allClasses is empty
+  let classList = allClasses.filter(c=>!c.archived);
+  if (!classList.length) {
+    try {
+      const snap = await getDocs(collection(db,'classes'));
+      classList = snap.docs.map(d=>({_id:d.id,...d.data()})).filter(c=>!c.archived);
+    } catch(e) { console.error(e); }
+  }
+  // Also add classes from entries that might not be in allClasses
+  const entryClasses = [...new Set(allEntries.map(e=>e.className).filter(Boolean))];
+  const classNames = new Set([
+    ...classList.map(c=>c.name),
+    ...entryClasses
+  ]);
+  sel.innerHTML = '<option value="">-- 請選擇班級 --</option>' +
+    [...classNames].sort().map(c=>`<option value="${c}">${c}</option>`).join('');
+}
+
+window.adminRenderEntries = function() {
+  const teacher = document.getElementById('filterTeacher').value;
+  const cls     = document.getElementById('filterClass').value;
+  const date    = document.getElementById('filterDate').value;
+  let filtered  = allEntries;
+  if (teacher) filtered=filtered.filter(e=>e.teacherName===teacher);
+  if (cls)     filtered=filtered.filter(e=>e.className===cls);
+  if (date)    filtered=filtered.filter(e=>e.date===date);
+  document.getElementById('entriesList').innerHTML = filtered.length ? filtered.map((e,i)=>adminEntryCard(e,'e'+i)).join('') : '<div class="empty"><div class="empty-icon">🔍</div><div>沒有符合的日誌</div></div>';
+};
+
+function adminEntryCard(e, prefix) {
+  const sts    = e.students||[];
+  const absent = sts.filter(s=>normAtt(e.attendance?.[s])!=='present');
+  const hwMiss = sts.filter(s=>hwVal(e.homework?.[s])!=='good');
+  const entryExams = e.exams?.length ? e.exams : (Object.keys(e.scores||{}).some(k=>e.scores[k]!==''&&e.scores[k]!=null) ? [{id:0,range:'',mode:'score',maxScore:e.maxScore||100,scores:e.scores||{}}] : []);
+  const hasSc  = entryExams.some(ex=>sts.some(s=>ex.scores?.[s]!==''&&ex.scores?.[s]!=null));
+  return `<div class="entry-card">
+    <div class="entry-header" onclick="adminToggle('${prefix}')">
+      <div><span class="entry-date">${e.date}</span><span class="entry-teacher">${e.teacherName||''}</span><span style="font-size:12px;color:var(--purple);margin-left:6px">${e.className||''}</span></div>
+      <div class="entry-badges">
+        ${absent.length?`<span class="ebadge ebadge-red">缺${absent.length}</span>`:''}
+        ${hwMiss.length?`<span class="ebadge ebadge-yellow">作業${hwMiss.length}人</span>`:''}
+        <span class="chevron" id="chev-${prefix}">▼</span>
+      </div>
+    </div>
+    <div class="entry-body" id="body-${prefix}">
+      <div class="detail-row"><div class="detail-label">出勤</div><div class="detail-value">${sts.map(s=>`<span class="tag ${ATT_TAG[normAtt(e.attendance?.[s])]}">${s}：${ATT_LABELS[normAtt(e.attendance?.[s])]}</span>`).join('')}</div></div>
+      <div class="detail-row"><div class="detail-label">作業</div><div class="detail-value">${sts.map(s=>{const hw=hwVal(e.homework?.[s]);const cls=hw==='good'?'tag-green':hw==='partial'?'tag-yellow':'tag-red';return `<span class="tag ${cls}">${s}：${HW_LABELS[hw]}</span>`;}).join('')}</div></div>
+      ${hasSc?renderExamRows(entryExams,sts):''}
+      ${e.todayProgress?`<div class="detail-row"><div class="detail-label">進度</div><div class="detail-value">${e.todayProgress}</div></div>`:''}
+      ${e.todayHomework?`<div class="detail-row"><div class="detail-label">作業</div><div class="detail-value">${e.todayHomework}</div></div>`:''}
+      ${e.nextExam?`<div class="detail-row"><div class="detail-label">考試</div><div class="detail-value" style="color:var(--red);font-weight:700">${e.nextExam}</div></div>`:''}
+      ${e.notes?`<div class="detail-row"><div class="detail-label">備註</div><div class="detail-value" style="color:var(--muted)">${e.notes}</div></div>`:''}
+      <div style="margin-top:10px">
+        <button class="btn btn-ghost btn-sm" onclick="openAdminEditModal('${e._id}')">✏️ 編輯此日誌</button>
+      </div>
+    </div>
+  </div>`;
+}
+window.adminToggle = function(p) {
+  document.getElementById('body-'+p).classList.toggle('open');
+  document.getElementById('chev-'+p).classList.toggle('open');
+};
+
+function adminRenderStats() {
+  const names = [...new Set(allEntries.map(e=>e.teacherName))].sort();
+  if (!names.length) { document.getElementById('statsList').innerHTML='<div class="empty"><div class="empty-icon">📈</div><div>尚無資料</div></div>'; return; }
+  document.getElementById('statsList').innerHTML = names.map(t=>{
+    const te = allEntries.filter(e=>e.teacherName===t);
+    const totalAbsent = te.reduce((a,e)=>a+Object.values(e.attendance||{}).filter(v=>normAtt(v)!=='present').length,0);
+    const totalHwMiss = te.reduce((a,e)=>a+Object.values(e.homework||{}).filter(v=>v===false).length,0);
+    return `<div class="teacher-stat">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:16px;font-weight:900">${t}</span>
+        <span style="font-size:12px;color:var(--muted)">最後填寫：${te[0]?.date||'-'}</span>
+      </div>
+      <div class="mini-stats">
+        <div class="mini-stat"><div class="mini-stat-num" style="color:var(--purple)">${te.length}</div><div class="mini-stat-lbl">📋 日誌數</div></div>
+        <div class="mini-stat"><div class="mini-stat-num" style="color:var(--red)">${totalAbsent}</div><div class="mini-stat-lbl">❌ 缺席次</div></div>
+        <div class="mini-stat"><div class="mini-stat-num" style="color:var(--yellow)">${totalHwMiss}</div><div class="mini-stat-lbl">⚠️ 未繳次</div></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── ADMIN STUDENT SEARCH ──
+function renderAdminStudentPick() {
+  const allNames = [...new Set(allEntries.flatMap(e=>e.students||[]))].sort();
+  const el = document.getElementById('adminStudentPick');
+  if (!el) return;
+  el.innerHTML = allNames.map(n=>`
+    <button onclick="pickAdminStudent('${n}')" style="background:var(--surface3);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:5px 14px;color:var(--text);font-family:inherit;font-size:13px;cursor:pointer"
+      onmouseover="this.style.borderColor='#c084fc';this.style.color='#c084fc'"
+      onmouseout="this.style.borderColor='rgba(255,255,255,.1)';this.style.color='var(--text)'">${n}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">尚無資料</span>';
+}
+window.pickAdminStudent = function(name) { document.getElementById('adminStudentInput').value=name; adminStudentSearch(); };
+window.adminFilterStudentPick = function() {
+  const q = document.getElementById('adminStudentInput').value.trim();
+  document.querySelectorAll('#adminStudentPick button').forEach(b=>{ b.style.display=(!q||b.textContent.includes(q))?'':'none'; });
+};
+
+window.adminStudentSearch = function() {
+  const name = document.getElementById('adminStudentInput').value.trim();
+  if (!name) { showToast('請輸入學生姓名','error'); return; }
+  const startMMDD = parseMMDD(document.getElementById('adminStudentStart').value);
+  const endMMDD   = parseMMDD(document.getElementById('adminStudentEnd').value);
+
+  const studentEntries = allEntries.filter(e=>{
+    if (!(e.students||[]).includes(name)) return false;
+    if (startMMDD&&endMMDD) { const d=entryDateToMMDD(e.date); return d&&d>=startMMDD&&d<=endMMDD; }
+    return true;
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+
+  const outEl = document.getElementById('adminStudentOutput');
+  if (!studentEntries.length) { outEl.innerHTML=`<div style="color:var(--muted);padding:20px;text-align:center">找不到「${name}」的任何記錄</div>`; return; }
+
+  const byGroup={};
+  studentEntries.forEach(e=>{
+    const k=`${e.teacherName||'未知老師'} · ${e.className||'未知班級'}`;
+    if(!byGroup[k]) byGroup[k]={teacher:e.teacherName,cls:e.className,entries:[]};
+    byGroup[k].entries.push(e);
+  });
+
+  const totalPresent = studentEntries.filter(e=>normAtt(e.attendance?.[name])==='present').length;
+  const totalAbsent  = studentEntries.length-totalPresent;
+  const totalHwDone  = studentEntries.filter(e=>hwVal(e.homework?.[name])==='good').length;
+  const scoreList2   = studentEntries.flatMap(e=>getStudentScores(e,name).filter(s=>s.mode!=='grade'));
+  const avgPct       = scoreList2.length?Math.round(scoreList2.reduce((a,s)=>a+parseFloat(s.score)/s.max*100,0)/scoreList2.length):null;
+  const avgColor     = avgPct===null?'var(--muted)':avgPct>=90?'var(--teal)':avgPct>=60?'var(--yellow)':'var(--red)';
+
+  let html=`<div style="background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.25);border-radius:14px;padding:18px;margin-bottom:18px">
+    <div style="font-size:22px;font-weight:900;color:var(--purple);margin-bottom:6px">👤 ${name}</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px">共 ${studentEntries.length} 筆　跨 ${Object.keys(byGroup).length} 個班級</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:var(--teal)">${totalPresent}</div><div style="font-size:12px;color:var(--muted)">出勤次數</div></div>
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:${totalAbsent>0?'var(--red)':'var(--muted)'}">${totalAbsent}</div><div style="font-size:12px;color:var(--muted)">缺課次數</div></div>
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:${totalHwDone<studentEntries.length?'var(--yellow)':'var(--teal)'}">${totalHwDone}/${studentEntries.length}</div><div style="font-size:12px;color:var(--muted)">作業繳交</div></div>
+      <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:14px;text-align:center"><div style="font-size:26px;font-weight:900;color:${avgColor}">${avgPct!==null?avgPct+'%':'—'}</div><div style="font-size:12px;color:var(--muted)">平均成績%</div></div>
+    </div>
+  </div>`;
+
+  Object.entries(byGroup).forEach(([groupName,g])=>{
+    html+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px">
+      <div style="font-size:15px;font-weight:900;color:var(--purple)">${g.cls}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">授課老師：${g.teacher}</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:rgba(255,255,255,.05)">
+          <th style="padding:8px;text-align:left;border:1px solid var(--border)">日期</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">出勤</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">作業</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">成績</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:center">評分</th>
+          <th style="padding:8px;border:1px solid var(--border);text-align:left">進度</th>
+        </tr></thead><tbody>`;
+    g.entries.forEach(e=>{
+      const st    = normAtt(e.attendance?.[name]);
+      const hw    = hwVal(e.homework?.[name]);
+      const hwBg  = hw==='good'?'rgba(86,204,178,.15)':hw==='partial'?'rgba(255,209,102,.15)':'rgba(255,107,107,.15)';
+      const rating= (e.classRating||{})[name]||0;
+      html+=`<tr>
+        <td style="padding:8px;border:1px solid var(--border);font-weight:700;white-space:nowrap">${e.date} 星期${e.weekday||''}</td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;background:${ATT_BG[st]}">${ATT_EMOJI[st]}</td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;background:${hwBg}">${HW_EMOJI[hw]}</td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;line-height:1.6">${renderScoreCell(e,name)}</td>
+        <td style="padding:8px;border:1px solid var(--border);text-align:center;color:${rating?RATING_COLORS[rating]:'var(--muted)'}">${rating?'⭐'.repeat(rating):'—'}</td>
+        <td style="padding:8px;border:1px solid var(--border);font-size:12px;color:var(--muted)">${e.todayProgress||'—'}</td>
+      </tr>`;
+    });
+    html+=`</tbody></table></div></div>`;
+  });
+
+  document.getElementById('adminPrintArea').innerHTML=`<div style="font-family:'Noto Sans TC',sans-serif;padding:20px;color:#000;background:#fff"><h2>百宏文教機構 · 學生個人報表</h2><h3>${name}</h3><div style="font-size:12px;margin-bottom:16px">產生時間：${new Date().toLocaleString('zh-TW')}</div>${html}</div>`;
+  outEl.innerHTML=html;
+  showToast(`✅ 找到 ${name} 的 ${studentEntries.length} 筆跨班記錄`);
+};
+
+window.adminPrintStudentReport = function() {
+  const pa=document.getElementById('adminPrintArea');
+  if(!pa.innerHTML){showToast('請先產生報表','error');return;}
+  pa.style.display='block'; window.print(); setTimeout(()=>pa.style.display='none',1000);
+};
+
+// ── ALERT SEARCH ──
+// ── ALERT SEARCH ──
+let _alertResults = []; // cached for export
+let _alertParams  = {};
+
+function populateAlertFilters() {
+  const classes = [...new Set(allEntries.map(e=>e.className).filter(Boolean))].sort();
+  const names   = [...new Set(allEntries.map(e=>e.teacherName).filter(Boolean))].sort();
+  document.getElementById('alertClass').innerHTML   = '<option value="">所有班級</option>'+classes.map(c=>`<option>${c}</option>`).join('');
+  document.getElementById('alertTeacher').innerHTML = '<option value="">所有老師</option>'+names.map(n=>`<option>${n}</option>`).join('');
+  const today = new Date();
+  const ago30 = new Date(today); ago30.setDate(ago30.getDate()-30);
+  document.getElementById('alertEnd').value   = today.toISOString().slice(0,10);
+  document.getElementById('alertStart').value = ago30.toISOString().slice(0,10);
+}
+
+function collectAlertData() {
+  const startMMDD   = parseMMDD(document.getElementById('alertStart').value);
+  const endMMDD     = parseMMDD(document.getElementById('alertEnd').value);
+  const filterClass = document.getElementById('alertClass').value;
+  const filterTeach = document.getElementById('alertTeacher').value;
+  const checkHw     = document.getElementById('alertHw').checked;
+  const checkScore  = document.getElementById('alertScore').checked;
+  const checkAbsent = document.getElementById('alertAbsent').checked;
+  const threshold   = parseFloat(document.getElementById('alertThreshold').value)||80;
+
+  _alertParams = { startMMDD, endMMDD, filterClass, filterTeach, checkHw, checkScore, checkAbsent, threshold,
+    startStr: document.getElementById('alertStart').value,
+    endStr:   document.getElementById('alertEnd').value };
+
+  const filtered = allEntries.filter(e => {
+    if (filterClass && e.className !== filterClass) return false;
+    if (filterTeach && e.teacherName !== filterTeach) return false;
+    if (startMMDD && endMMDD) {
+      const d = entryDateToMMDD(e.date);
+      if (!d || d < startMMDD || d > endMMDD) return false;
+    }
+    return true;
+  });
+
+  const studentIssues = {};
+  filtered.forEach(e => {
+    const sts = e.students||[];
+    sts.forEach(s => {
+      if (!studentIssues[s]) studentIssues[s] = { name:s, hwMiss:[], lowScore:[], absent:[], classes:new Set() };
+      studentIssues[s].classes.add(`${e.className}（${e.teacherName||''}）`);
+      if (checkHw) {
+        const hw = hwVal(e.homework?.[s]);
+        if (hw !== 'good') studentIssues[s].hwMiss.push({ date:e.date, class:e.className, status:HW_LABELS[hw] });
+      }
+      if (checkScore) {
+        getStudentScores(e, s).forEach(sc => {
+          if (sc.mode === 'grade') return;
+          const pct = Math.round(parseFloat(sc.score)/sc.max*100);
+          if (!isNaN(pct) && pct < threshold)
+            studentIssues[s].lowScore.push({ date:e.date, class:e.className, score:sc.score, max:sc.max, pct, range:sc.range });
+        });
+      }
+      if (checkAbsent) {
+        const att = normAtt(e.attendance?.[s]);
+        if (att !== 'present') studentIssues[s].absent.push({ date:e.date, class:e.className, status:ATT_LABELS[att] });
+      }
+    });
+  });
+
+  _alertResults = Object.values(studentIssues)
+    .filter(s => s.hwMiss.length || s.lowScore.length || s.absent.length)
+    .sort((a,b) => (b.hwMiss.length+b.lowScore.length+b.absent.length) - (a.hwMiss.length+a.lowScore.length+a.absent.length));
+
+  return { flagged: _alertResults, total: filtered.length };
+}
+
+window.runAlertSearch = function() {
+  const { checkHw, checkScore, checkAbsent, threshold } = _alertParams;
+  if (!document.getElementById('alertHw').checked &&
+      !document.getElementById('alertScore').checked &&
+      !document.getElementById('alertAbsent').checked) {
+    showToast('請至少勾選一個查詢條件','error'); return;
+  }
+
+  const { flagged, total } = collectAlertData();
+  const p = _alertParams;
+  const outEl = document.getElementById('alertResults');
+
+  if (!flagged.length) {
+    outEl.innerHTML = `<div style="background:rgba(86,204,178,.08);border:1px solid rgba(86,204,178,.2);border-radius:12px;padding:20px;text-align:center">
+      <div style="font-size:32px;margin-bottom:8px">✅</div>
+      <div style="font-size:15px;font-weight:700;color:var(--teal)">此範圍內沒有異常記錄</div>
+      <div style="font-size:13px;color:var(--muted);margin-top:4px">共掃描 ${total} 筆日誌</div>
+    </div>`;
+    return;
+  }
+
+  const hwCount    = flagged.filter(s=>s.hwMiss.length).length;
+  const scoreCount = flagged.filter(s=>s.lowScore.length).length;
+  const absentCount= flagged.filter(s=>s.absent.length).length;
+
+  let html = `
+    <div style="background:rgba(255,107,107,.07);border:1px solid rgba(255,107,107,.2);border-radius:12px;padding:14px;margin-bottom:16px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
+      <span style="font-size:14px;font-weight:700;color:var(--red)">⚠️ 共 ${flagged.length} 位學生有異常</span>
+      ${p.checkHw    ? `<span style="font-size:13px;color:var(--yellow)">📝 作業問題：${hwCount} 人</span>` : ''}
+      ${p.checkScore ? `<span style="font-size:13px;color:var(--red)">📉 低於${p.threshold}%：${scoreCount} 人</span>` : ''}
+      ${p.checkAbsent? `<span style="font-size:13px;color:var(--red)">❌ 缺課：${absentCount} 人</span>` : ''}
+      <span style="font-size:12px;color:var(--muted);margin-left:auto">掃描 ${total} 筆</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:rgba(255,255,255,.06);">
+          <th style="padding:10px 12px;text-align:left;border:1px solid var(--border)">學生</th>
+          <th style="padding:10px 12px;text-align:left;border:1px solid var(--border)">班級</th>
+          ${p.checkHw    ? `<th style="padding:10px 12px;text-align:center;border:1px solid var(--border);color:var(--yellow)">📝 作業問題</th>` : ''}
+          ${p.checkScore ? `<th style="padding:10px 12px;text-align:center;border:1px solid var(--border);color:var(--red)">📉 低分次數</th><th style="padding:10px 12px;text-align:center;border:1px solid var(--border);color:var(--red)">最低分</th>` : ''}
+          ${p.checkAbsent? `<th style="padding:10px 12px;text-align:center;border:1px solid var(--border);color:var(--red)">❌ 缺課</th>` : ''}
+          <th style="padding:10px 12px;text-align:left;border:1px solid var(--border);color:var(--muted)">明細</th>
+        </tr></thead><tbody>`;
+
+  flagged.forEach(s => {
+    const minScore = s.lowScore.length ? Math.min(...s.lowScore.map(r=>r.pct)) : null;
+    const details = [
+      ...s.hwMiss.map(r=>`<span style="color:var(--yellow)">${r.date} ${r.class} ${r.status}</span>`),
+      ...s.lowScore.map(r=>`<span style="color:var(--red)">${r.date} ${r.class}${r.range?' ('+r.range+')':''} ${r.pct}%</span>`),
+      ...s.absent.map(r=>`<span style="color:var(--muted)">${r.date} ${r.class} ${r.status}</span>`)
+    ];
+    html += `<tr>
+      <td style="padding:10px 12px;border:1px solid var(--border);font-weight:700">${s.name}</td>
+      <td style="padding:10px 12px;border:1px solid var(--border);font-size:12px;color:var(--muted)">${[...s.classes].join('<br>')}</td>
+      ${p.checkHw    ? `<td style="padding:10px 12px;border:1px solid var(--border);text-align:center;font-weight:700;color:${s.hwMiss.length?'var(--yellow)':'var(--muted)'}">${s.hwMiss.length||'—'}</td>` : ''}
+      ${p.checkScore ? `<td style="padding:10px 12px;border:1px solid var(--border);text-align:center;font-weight:700;color:${s.lowScore.length?'var(--red)':'var(--muted)'}">${s.lowScore.length||'—'}</td>
+        <td style="padding:10px 12px;border:1px solid var(--border);text-align:center;font-weight:700;color:${minScore!==null?(minScore>=60?'var(--yellow)':'var(--red)'):'var(--muted)'}">${minScore!==null?minScore+'%':'—'}</td>` : ''}
+      ${p.checkAbsent? `<td style="padding:10px 12px;border:1px solid var(--border);text-align:center;font-weight:700;color:${s.absent.length?'var(--red)':'var(--muted)'}">${s.absent.length||'—'}</td>` : ''}
+      <td style="padding:10px 12px;border:1px solid var(--border);font-size:11px;line-height:2">${details.join('<br>')}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  outEl.innerHTML = html;
+  showToast(`找到 ${flagged.length} 位學生有異常記錄`);
+};
+
+window.exportAlertCSV = function() {
+  const { flagged, total } = collectAlertData();
+  if (!flagged.length) { showToast('沒有資料可以匯出','error'); return; }
+
+  const p = _alertParams;
+  const now = new Date().toLocaleString('zh-TW');
+
+  let html = `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>異常學生清單</title>
+<style>
+  body { font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif; padding: 32px; color: #111; background: #fff; font-size: 13px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .meta { color: #666; font-size: 12px; margin-bottom: 24px; }
+  .summary { display: flex; gap: 24px; background: #f8f8f8; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+  th { background: #f0f0f0; padding: 10px 12px; text-align: left; border: 1px solid #ccc; font-size: 12px; }
+  td { padding: 10px 12px; border: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) { background: #fafafa; }
+  .student-name { font-weight: 700; font-size: 14px; }
+  .badge-hw    { display:inline-block; background: #fff3cd; color: #856404; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: 700; margin: 2px; }
+  .badge-score { display:inline-block; background: #f8d7da; color: #721c24; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: 700; margin: 2px; }
+  .badge-absent{ display:inline-block; background: #d1ecf1; color: #0c5460; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: 700; margin: 2px; }
+  .detail-item { display: block; color: #555; font-size: 12px; line-height: 1.8; }
+  .detail-hw    { color: #856404; }
+  .detail-score { color: #721c24; font-weight: 600; }
+  .detail-absent{ color: #0c5460; }
+  @media print {
+    body { padding: 16px; }
+    .no-print { display: none; }
+  }
+</style>
+</head>
+<body>
+  <button class="no-print" onclick="window.print()" style="margin-bottom:16px;padding:8px 20px;background:#333;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">🖨 列印 / 存成 PDF</button>
+  <h1>百宏文教機構・異常學生清單</h1>
+  <div class="meta">
+    查詢範圍：${p.startStr||''}${p.startStr&&p.endStr?' ～ ':''}${p.endStr||'（全部）'}
+    ${p.filterClass ? '　班級：'+p.filterClass : ''}
+    ${p.filterTeach ? '　老師：'+p.filterTeach : ''}
+    　產生時間：${now}
+  </div>
+  <div class="summary">
+    <span>⚠️ 共 <strong>${flagged.length}</strong> 位學生有異常</span>
+    ${p.checkHw    ? `<span>📝 作業問題：<strong>${flagged.filter(s=>s.hwMiss.length).length}</strong> 人</span>` : ''}
+    ${p.checkScore ? `<span>📉 低於${p.threshold}%：<strong>${flagged.filter(s=>s.lowScore.length).length}</strong> 人</span>` : ''}
+    ${p.checkAbsent? `<span>❌ 有缺課：<strong>${flagged.filter(s=>s.absent.length).length}</strong> 人</span>` : ''}
+    <span style="margin-left:auto;color:#999">掃描 ${total} 筆日誌</span>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th style="min-width:70px">學生</th>
+      <th>班級</th>
+      ${p.checkHw    ? '<th style="min-width:60px;text-align:center">作業問題</th>' : ''}
+      ${p.checkScore ? '<th style="min-width:60px;text-align:center">低分次數</th><th style="min-width:60px;text-align:center">最低分</th>' : ''}
+      ${p.checkAbsent? '<th style="min-width:60px;text-align:center">缺課次數</th>' : ''}
+      <th>異常明細</th>
+    </tr></thead>
+    <tbody>`;
+
+  flagged.forEach(s => {
+    const minScore = s.lowScore.length ? Math.min(...s.lowScore.map(r=>r.pct)) : null;
+    html += `<tr>
+      <td class="student-name">${s.name}</td>
+      <td style="color:#555;font-size:12px">${[...s.classes].join('<br>')}</td>
+      ${p.checkHw    ? `<td style="text-align:center">${s.hwMiss.length ? `<span class="badge-hw">${s.hwMiss.length} 次</span>` : '—'}</td>` : ''}
+      ${p.checkScore ? `<td style="text-align:center">${s.lowScore.length ? `<span class="badge-score">${s.lowScore.length} 次</span>` : '—'}</td>
+        <td style="text-align:center;font-weight:700;color:${minScore!==null&&minScore<60?'#c00':'#856404'}">${minScore!==null?minScore+'%':'—'}</td>` : ''}
+      ${p.checkAbsent? `<td style="text-align:center">${s.absent.length ? `<span class="badge-absent">${s.absent.length} 次</span>` : '—'}</td>` : ''}
+      <td>
+        ${s.hwMiss.map(r=>`<span class="detail-item detail-hw">📝 ${r.date} ${r.class}　${r.status}</span>`).join('')}
+        ${s.lowScore.map(r=>`<span class="detail-item detail-score">📉 ${r.date} ${r.class}${r.range?' ('+r.range+')':''} ${r.score}/${r.max}（${r.pct}%）</span>`).join('')}
+        ${s.absent.map(r=>`<span class="detail-item detail-absent">❌ ${r.date} ${r.class}　${r.status}</span>`).join('')}
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></body></html>`;
+
+  const blob = new Blob([html], {type:'text/html;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const dateStr = `${p.startStr||''}${p.startStr&&p.endStr?'_':''}${p.endStr||''}`;
+  a.href = url;
+  a.download = `異常學生清單_${dateStr}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('✅ 報表已下載，用瀏覽器開啟後可列印或存 PDF');
+};
+// ── SCHEDULE ──
+const WEEKDAYS_LIST = ['一','二','三','四','五','六','日'];
+let schedule           = {};   // 舊格式 { teacherId: [...] }，保留相容
+let scheduleClassDays  = {};   // 目前生效課表 { classId: ['一','三','五'] }
+let scheduleSets   = [];   // 所有課表版本
+let editingSetId   = null; // 編輯中的課表版本
+let editingDays    = {};   // 編輯中的排課（未儲存）
+let scheduleConfig = { mode:'auto', activeSetId:'' };
+let activeSetId    = null; // 實際生效中的課表版本
+
+// ── 判斷某個日期該套用哪份課表 ──────────────────────────────
+// 規則：先找日期區間涵蓋該日的課表（多份符合時取開始日最晚的，也就是最精確的）；
+//      都不符合就用「常態課表」（沒有設定起訖日的那份）。
+function resolveScheduleSet(iso) {
+  if (!scheduleSets.length) return null;
+  if (scheduleConfig.mode === 'manual' && scheduleConfig.activeSetId) {
+    const forced = scheduleSets.find(x => x._id === scheduleConfig.activeSetId);
+    if (forced) return forced;
+  }
+  const dated = scheduleSets
+    .filter(x => (x.startDate || x.endDate))
+    .filter(x => (!x.startDate || x.startDate <= iso) && (!x.endDate || iso <= x.endDate))
+    .sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
+  if (dated.length) return dated[0];
+  return scheduleSets.find(x => !x.startDate && !x.endDate) || null;
+}
+
+// 取得課表的班級排課表。舊課表只有老師層級，先用「主導老師的上課日」推導成
+// 該老師每個班的排課，主管再進去逐班修掉不上課的日子。
+function effectiveClassDays(set) {
+  if (!set) return {};
+  if (set.classDays) return { ...set.classDays };
+  const out = {};
+  allClasses.filter(c => !c.archived).forEach(c => {
+    const d = (set.days || {})[c.teacherId] || [];
+    if (d.length) out[c._id] = [...d];
+  });
+  return out;
+}
+
+async function loadSchedule() {
+  try {
+    const [setSnap, cfgSnap] = await Promise.all([
+      getDocs(collection(db,'scheduleSets')),
+      getDocs(collection(db,'scheduleConfig'))
+    ]);
+    scheduleSets = setSnap.docs.map(d => ({_id:d.id, ...d.data()}))
+      .sort((a,b) => (a.startDate||'').localeCompare(b.startDate||'') || (a.createdAt||0)-(b.createdAt||0));
+
+    const cfg = cfgSnap.docs.find(d => d.id === 'current');
+    scheduleConfig = cfg ? { mode:'auto', activeSetId:'', ...cfg.data() } : { mode:'auto', activeSetId:'' };
+
+    // 首次使用：把舊的 schedule collection 轉成一份「常態課表」
+    if (!scheduleSets.length) {
+      const legacy = await getDocs(collection(db,'schedule'));
+      const days = {};
+      legacy.docs.forEach(d => { if ((d.data().days||[]).length) days[d.id] = d.data().days; });
+      const ref = await addDoc(collection(db,'scheduleSets'), {
+        name:'常態課表', startDate:'', endDate:'', days,
+        createdAt:Date.now(), updatedAt:Date.now()
+      });
+      scheduleSets = [{ _id:ref.id, name:'常態課表', startDate:'', endDate:'', days, createdAt:Date.now() }];
+    }
+
+    const act = resolveScheduleSet(todayISO());
+    activeSetId  = act?._id || null;
+    schedule     = act?.days ? {...act.days} : {};          // 舊的老師層級，僅供相容
+    scheduleClassDays = effectiveClassDays(act);            // 新的班級層級
+
+    if (editingSetId && !scheduleSets.some(x => x._id === editingSetId)) editingSetId = null;
+    if (!editingSetId) editingSetId = activeSetId || scheduleSets[0]?._id || null;
+    editingDays = { ...effectiveClassDays(scheduleSets.find(x => x._id === editingSetId)) };
+  } catch(e) { console.error('loadSchedule:', e); }
+}
+
+function renderScheduleSetBar() {
+  const el = document.getElementById('scheduleSetBar');
+  if (!el) return;
+  const cur = scheduleSets.find(x => x._id === editingSetId);
+  const act = scheduleSets.find(x => x._id === activeSetId);
+
+  el.innerHTML = `
+    <div style="background:rgba(123,97,255,.07);border:1px solid rgba(123,97,255,.22);border-radius:var(--radius);padding:14px;margin-bottom:16px">
+      <div style="font-size:13px;margin-bottom:12px">
+        <span style="color:var(--muted)">目前生效：</span>
+        <span style="font-weight:700;color:var(--purple)">${act ? esc(act.name) : '尚未設定'}</span>
+        <span style="color:var(--muted);font-size:12px">
+          ${scheduleConfig.mode === 'manual' ? '（手動指定）' : '（依日期自動判斷）'}
+        </span>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <label class="field-label" style="margin:0;min-width:64px">編輯課表</label>
+        <select class="select-input" id="scheduleSetSel" onchange="switchEditingSet(this.value)"
+          style="margin:0;flex:1;min-width:180px">
+          ${scheduleSets.map(x => `<option value="${x._id}" ${x._id===editingSetId?'selected':''}>
+            ${esc(x.name)}${x._id===activeSetId?'　★ 生效中':''}
+          </option>`).join('')}
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="newScheduleSet()">➕ 新增</button>
+        <button class="btn btn-ghost btn-sm" onclick="duplicateScheduleSet()">📋 複製</button>
+        <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="deleteScheduleSet()">🗑</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div>
+          <label class="field-label">課表名稱</label>
+          <input class="field-input" id="setName" value="${esc(cur?.name||'')}" style="margin:0">
+        </div>
+        <div>
+          <label class="field-label">適用起日</label>
+          <input type="date" class="field-input" id="setStart" value="${cur?.startDate||''}" style="margin:0">
+        </div>
+        <div>
+          <label class="field-label">適用迄日</label>
+          <input type="date" class="field-input" id="setEnd" value="${cur?.endDate||''}" style="margin:0">
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">
+        起訖日都留空 =「常態課表」，當沒有任何特殊期間涵蓋今天時就套用它。寒暑假課表請填上日期區間。
+      </div>
+
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="field-label" style="margin:0">生效方式</label>
+        <select class="select-input" id="scheduleModeSel" onchange="setScheduleMode(this.value)" style="margin:0;flex:1;min-width:220px">
+          <option value="auto" ${scheduleConfig.mode!=='manual'?'selected':''}>自動：依今天的日期判斷</option>
+          ${scheduleSets.map(x => `<option value="m:${x._id}" ${scheduleConfig.mode==='manual'&&scheduleConfig.activeSetId===x._id?'selected':''}>
+            手動固定套用：${esc(x.name)}
+          </option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+}
+
+function renderScheduleEditor() {
+  renderScheduleSetBar();
+  const el = document.getElementById('scheduleEditor');
+  if (!el) return;
+  if (!teachers.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px">請先在「帳號管理」新增老師帳號</div>';
+    return;
+  }
+  const active = allClasses.filter(c => !c.archived);
+  if (!active.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px">尚無班級資料</div>';
+    return;
+  }
+
+  const dayBtns = (cid, days) => WEEKDAYS_LIST.map(d => {
+    const on = days.includes(d);
+    return `<button onclick="toggleScheduleDay('${cid}','${d}')" id="sched_${cid}_${d}"
+      style="${on
+        ? 'background:linear-gradient(135deg,var(--teal),#2ecc71);color:#0d1117;border:none;'
+        : 'background:var(--surface3);color:var(--muted);border:1px solid var(--border);'}
+        border-radius:8px;padding:6px 11px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;min-width:40px;">
+      ${d}
+    </button>`;
+  }).join('');
+
+  const html = teachers.map(t => {
+    const mine = active.filter(c => c.teacherId === t.userId);
+    if (!mine.length) return '';
+    return `
+    <div style="margin-bottom:18px">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:1px;margin-bottom:8px">👤 ${esc(t.name)}</div>
+      ${mine.map(c => {
+        const days = editingDays[c._id] || [];
+        const co = (c.members||[]).map(m => m.teacherName);
+        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+          <div style="min-width:130px">
+            <div style="font-size:14px;font-weight:700">${esc(c.name)}</div>
+            ${co.length ? `<div style="font-size:11px;color:var(--purple)">👥 ${co.map(esc).join('、')}</div>` : ''}
+          </div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">${dayBtns(c._id, days)}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
+  const orphans = active.filter(c => !teachers.some(t => t.userId === c.teacherId));
+  el.innerHTML = html + (orphans.length ? `
+    <div style="margin-top:8px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">⚠️ 未對應到老師帳號的班級</div>
+      ${orphans.map(c => `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;flex-wrap:wrap">
+        <div style="min-width:130px;font-size:14px;font-weight:700">${esc(c.name)}</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">${dayBtns(c._id, editingDays[c._id]||[])}</div>
+      </div>`).join('')}
+    </div>` : '');
+}
+
+window.toggleScheduleDay = function(classId, day) {
+  if (!editingDays[classId]) editingDays[classId] = [];
+  const idx = editingDays[classId].indexOf(day);
+  if (idx >= 0) editingDays[classId].splice(idx, 1);
+  else editingDays[classId].push(day);
+  const btn = document.getElementById(`sched_${classId}_${day}`);
+  if (btn) {
+    const active = editingDays[classId].includes(day);
+    btn.style.cssText = (active
+      ? 'background:linear-gradient(135deg,var(--teal),#2ecc71);color:#0d1117;border:none;'
+      : 'background:var(--surface3);color:var(--muted);border:1px solid var(--border);')
+      + 'border-radius:8px;padding:6px 11px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;min-width:40px;';
+  }
+};
+
+window.saveSchedule = async function() {
+  if (!editingSetId) { showToast('請先新增一份課表','error'); return; }
+  const name  = document.getElementById('setName').value.trim();
+  const start = document.getElementById('setStart').value;
+  const end   = document.getElementById('setEnd').value;
+  if (!name) { showToast('請填寫課表名稱','error'); return; }
+  if (start && end && start > end) { showToast('起日不能晚於迄日','error'); return; }
+
+  // 只保留還存在的班級，並清掉空陣列
+  const classDays = {};
+  allClasses.filter(c => !c.archived).forEach(c => {
+    const d = editingDays[c._id] || [];
+    if (d.length) classDays[c._id] = d;
+  });
+
+  showLoading('儲存課表...');
+  try {
+    await setDoc(doc(db,'scheduleSets',editingSetId), {
+      name, startDate:start, endDate:end, classDays, updatedAt:Date.now()
+    }, { merge:true });
+    await loadSchedule();
+    renderScheduleEditor();
+    renderExportPanel();
+    renderScheduleStatusBanner();
+    showToast('💾 課表已儲存');
+  } catch(e) { showToast('❌ 儲存失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.switchEditingSet = function(id) {
+  const dirty = JSON.stringify(editingDays) !== JSON.stringify(effectiveClassDays(scheduleSets.find(x=>x._id===editingSetId)));
+  if (dirty && !confirm('這份課表有未儲存的變更，切換後會遺失。確定要切換嗎？')) {
+    document.getElementById('scheduleSetSel').value = editingSetId;
+    return;
+  }
+  editingSetId = id;
+  editingDays  = effectiveClassDays(scheduleSets.find(x => x._id === id));
+  renderScheduleEditor();
+};
+
+window.newScheduleSet = async function() {
+  const name = prompt('新課表名稱：', '寒假課表');
+  if (!name) return;
+  showLoading('建立中...');
+  try {
+    const ref = await addDoc(collection(db,'scheduleSets'), {
+      name, startDate:'', endDate:'', days:{}, createdAt:Date.now(), updatedAt:Date.now()
+    });
+    editingSetId = ref.id;
+    await loadSchedule();
+    editingSetId = ref.id;
+    editingDays  = {};
+    renderScheduleEditor();
+    showToast('✅ 已建立，記得設定適用日期');
+  } catch(e) { showToast('❌ 建立失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.duplicateScheduleSet = async function() {
+  const cur = scheduleSets.find(x => x._id === editingSetId);
+  if (!cur) return;
+  const name = prompt('複製為新課表，名稱：', cur.name + ' 複本');
+  if (!name) return;
+  showLoading('複製中...');
+  try {
+    const ref = await addDoc(collection(db,'scheduleSets'), {
+      name, startDate:'', endDate:'', days:{ ...(cur.days||{}) },
+      createdAt:Date.now(), updatedAt:Date.now()
+    });
+    editingSetId = ref.id;
+    await loadSchedule();
+    editingSetId = ref.id;
+    editingDays  = { ...(cur.days||{}) };
+    renderScheduleEditor();
+    showToast('📋 已複製，記得設定適用日期');
+  } catch(e) { showToast('❌ 複製失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.deleteScheduleSet = async function() {
+  const cur = scheduleSets.find(x => x._id === editingSetId);
+  if (!cur) return;
+  if (scheduleSets.length <= 1) { showToast('至少要保留一份課表','error'); return; }
+  if (!confirm(`確定刪除課表「${cur.name}」？此操作無法還原。`)) return;
+  showLoading('刪除中...');
+  try {
+    await deleteDoc(doc(db,'scheduleSets',editingSetId));
+    if (scheduleConfig.mode === 'manual' && scheduleConfig.activeSetId === editingSetId) {
+      await setDoc(doc(db,'scheduleConfig','current'), { mode:'auto', activeSetId:'' });
+    }
+    editingSetId = null;
+    await loadSchedule();
+    renderScheduleEditor();
+    renderScheduleStatusBanner();
+    showToast('🗑 課表已刪除');
+  } catch(e) { showToast('❌ 刪除失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.setScheduleMode = async function(val) {
+  const manual = val.startsWith('m:');
+  showLoading('更新中...');
+  try {
+    await setDoc(doc(db,'scheduleConfig','current'), {
+      mode: manual ? 'manual' : 'auto',
+      activeSetId: manual ? val.slice(2) : '',
+      updatedAt: Date.now()
+    });
+    await loadSchedule();
+    renderScheduleEditor();
+    renderScheduleStatusBanner();
+    showToast(manual ? '📌 已固定套用指定課表' : '🔄 已改為依日期自動判斷');
+  } catch(e) { showToast('❌ 更新失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+// 把班級依主要負責老師分組，讓未填名單以「人」為單位閱讀，而不是一長串班名
+function groupByTeacher(classList) {
+  const map = new Map();
+  classList.forEach(c => {
+    const name = teachers.find(t => t.userId === c.teacherId)?.name || c.teacherId || '未指定';
+    if (!map.has(name)) map.set(name, []);
+    map.get(name).push(c);
+  });
+  return [...map.entries()]
+    .map(([teacher, classes]) => ({teacher, classes}))
+    .sort((a,b) => b.classes.length - a.classes.length);
+}
+
+function renderScheduleStatusBanner() {
+  // 兩個位置共用同一份內容：總覽頁 + 周課表頁
+  const banners = ['scheduleStatusBanner','scheduleStatusBanner2']
+    .map(id => document.getElementById(id)).filter(Boolean);
+  if (!banners.length) return;
+  const banner = { set innerHTML(v) { banners.forEach(b => b.innerHTML = v); } };
+  const now     = new Date();
+  const todayWD = WEEKDAYS_LIST[now.getDay()===0 ? 6 : now.getDay()-1]; // 一~日
+  const mm      = String(now.getMonth()+1).padStart(2,'0');
+  const dd      = String(now.getDate()).padStart(2,'0');
+  const todayStr= `${mm}/${dd}`;
+
+  // 今天有排課的班級
+  const nameOfT = id => teachers.find(t => t.userId === id)?.name || id;
+  const todayIso = todayISO();
+  const allScheduled = allClasses.filter(c =>
+    !c.archived && (scheduleClassDays[c._id]||[]).includes(todayWD));
+  // 停課的班級不列入應填名單
+  const closedToday    = allScheduled.map(c => ({c, cl:closureFor(c._id, todayIso)})).filter(x => x.cl);
+  const scheduledToday = allScheduled.filter(c => !closureFor(c._id, todayIso));
+  if (!scheduledToday.length && !closedToday.length) {
+    banner.innerHTML = `<div style="background:rgba(86,204,178,.08);border:1px solid rgba(86,204,178,.2);border-radius:12px;padding:14px;font-size:13px;color:var(--muted)">今天（週${todayWD}）沒有班級排課</div>`;
+    return;
+  }
+
+  // 今天已經有日誌的班級（任何一位負責老師填的都算）
+  const classesFiledToday = new Set(
+    allEntries.filter(e => entryDateToMMDD(e.date) === todayStr).map(e => e.classId).filter(Boolean));
+
+  const filed   = scheduledToday.filter(c =>  classesFiledToday.has(c._id));
+  const missing = scheduledToday.filter(c => !classesFiledToday.has(c._id));
+
+  const accent = missing.length ? 'var(--red)' : 'var(--teal)';
+  banner.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${accent};border-radius:12px;padding:14px 16px;">
+      <div style="font-size:14px;font-weight:700;color:${accent};margin-bottom:10px;">
+        ${missing.length
+          ? `今天 ${todayStr}（週${todayWD}）還有 ${missing.length} 班未填，共 ${allScheduled.length} 班有課`
+          : `✅ 今天（週${todayWD} ${todayStr}）應填的 ${filed.length} 個班級都已填寫${closedToday.length?`，另有 ${closedToday.length} 班停課`:''}`}
+      </div>
+      ${missing.length ? `<div style="margin-bottom:6px">
+        ${groupByTeacher(missing).map(g => `
+          <div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;flex-wrap:wrap">
+            <span style="font-size:13px;font-weight:700;color:var(--red);min-width:76px">${esc(g.teacher)}</span>
+            <span style="font-size:12px;color:var(--red);opacity:.75">${g.classes.length} 班</span>
+            <span style="font-size:12px;color:var(--muted);flex:1;min-width:180px">${g.classes.map(c=>esc(c.name)).join('、')}</span>
+          </div>`).join('')}
+      </div>` : ''}
+      ${filed.length ? `<div style="font-size:12px;color:var(--muted);padding-top:6px;border-top:1px solid rgba(255,255,255,.07)">
+        已填寫 ${filed.length} 班：${filed.map(c=>esc(c.name)).join('、')}
+      </div>` : ''}
+      ${closedToday.length ? `<div style="margin-top:8px"><span style="font-size:12px;color:var(--muted)">停課：</span>${closedToday.map(x=>`<span style="display:inline-block;background:rgba(255,255,255,.08);color:var(--muted);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700;margin:2px">${esc(x.c.name)}<span style="opacity:.7;font-weight:400">（${esc(x.cl.reason||'停課')}${x.cl.status==='pending'?' · 待確認':''}）</span></span>`).join('')}</div>` : ''}
+    </div>`;
+}
+
+window.checkMissingLogs = function() {
+  const dateVal = document.getElementById('checkDate').value;
+  if (!dateVal) { showToast('請選擇日期','error'); return; }
+
+  const parts   = dateVal.split('-');
+  const mmdd    = `${parts[1]}/${parts[2]}`;
+  const dayIdx  = new Date(dateVal).getDay(); // 0=Sun
+  const weekday = WEEKDAYS_LIST[dayIdx===0 ? 6 : dayIdx-1];
+
+  const setForDay  = resolveScheduleSet(dateVal);
+  const daysForDay = effectiveClassDays(setForDay);
+  const nameOfT2   = id => teachers.find(t => t.userId === id)?.name || id;
+
+  const allSchedOnDay  = allClasses.filter(c => !c.archived && (daysForDay[c._id]||[]).includes(weekday));
+  const closedOnDay    = allSchedOnDay.map(c => ({c, cl:closureFor(c._id, dateVal)})).filter(x => x.cl);
+  const scheduledOnDay = allSchedOnDay.filter(c => !closureFor(c._id, dateVal));
+  const classesFiledOnDay = new Set(
+    allEntries.filter(e => entryDateToMMDD(e.date) === mmdd).map(e => e.classId).filter(Boolean));
+
+  const filed   = scheduledOnDay.filter(c =>  classesFiledOnDay.has(c._id));
+  const missing = scheduledOnDay.filter(c => !classesFiledOnDay.has(c._id));
+  const chip = (c, bg, fg, withTeacher) => `<span style="display:inline-block;background:${bg};color:${fg};border-radius:20px;padding:4px 12px;font-size:13px;font-weight:700;margin:3px">${esc(c.name)}${withTeacher?`<span style="opacity:.7;font-weight:400">（${esc(nameOfT2(c.teacherId))}）</span>`:''}</span>`;
+
+  const el = document.getElementById('missingLogsResult');
+  if (!scheduledOnDay.length && !closedOnDay.length) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:12px 0">${dateVal}（週${weekday}）沒有班級排課</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">${dateVal}（週${weekday}）排課 ${scheduledOnDay.length} 個班級　<span style="opacity:.7">課表：${esc(setForDay?.name||'未設定')}</span></div>
+    ${missing.length ? `
+    <div style="background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.2);border-radius:10px;padding:14px;margin-bottom:10px;">
+      <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px;">❌ 尚未填寫（${missing.length} 個班級）</div>
+      <div>${missing.map(c=>chip(c,'rgba(255,107,107,.2)','var(--red)',true)).join('')}</div>
+    </div>` : ''}
+    ${filed.length ? `
+    <div style="background:rgba(86,204,178,.08);border:1px solid rgba(86,204,178,.2);border-radius:10px;padding:14px;">
+      <div style="font-size:13px;font-weight:700;color:var(--teal);margin-bottom:8px;">✅ 已填寫（${filed.length} 個班級）</div>
+      <div>${filed.map(c=>chip(c,'rgba(86,204,178,.2)','var(--teal)',true)).join('')}</div>
+    </div>` : ''}
+    ${closedOnDay.length ? `
+    <div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:10px;">
+      <div style="font-size:13px;font-weight:700;color:var(--muted);margin-bottom:8px;">🚫 停課（${closedOnDay.length} 個班級）</div>
+      <div>${closedOnDay.map(x=>`<span style="display:inline-block;background:rgba(255,255,255,.07);color:var(--muted);border-radius:20px;padding:4px 12px;font-size:13px;margin:3px">${esc(x.c.name)}<span style="opacity:.7">（${esc(x.cl.reason||'停課')}${x.cl.status==='pending'?' · 待確認':''}）</span></span>`).join('')}</div>
+    </div>` : ''}`;
+};
+
+// ── ADMIN EDIT ENTRY ──
+let adminEditingEntry = null;
+
+window.openAdminEditModal = function(entryId) {
+  const entry = allEntries.find(e=>e._id===entryId);
+  if (!entry) return;
+  adminEditingEntry = entry;
+
+  const sts = entry.students||[];
+  const attMap = entry.attendance||{};
+  const hwMap  = entry.homework||{};
+  const ratingMap = entry.classRating||{};
+  const entryExams = entry.exams?.length
+    ? entry.exams
+    : (Object.keys(entry.scores||{}).some(k=>entry.scores[k]!==''&&entry.scores[k]!=null)
+        ? [{id:0, range:'', mode:'score', maxScore:entry.maxScore||100, scores:{...entry.scores}}]
+        : [{id:0, range:'', mode:'score', maxScore:100, scores:{}}]);
+
+  const modal = document.getElementById('adminEditModal');
+  document.getElementById('adminEditTitle').textContent = `編輯日誌 — ${entry.teacherName} · ${entry.className} · ${entry.date}`;
+
+  // Attendance
+  document.getElementById('adminEditAttendance').innerHTML = sts.map(s=>{
+    const st=normAtt(attMap[s]);
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="min-width:60px;font-weight:700;font-size:14px">${s}</span>
+      <select id="adm_att_${s.replace(/\s/g,'_')}" style="background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:6px 10px;color:var(--text);font-family:inherit;font-size:13px;outline:none;cursor:pointer">
+        ${ATT_STATES.map(a=>`<option value="${a}"${a===st?' selected':''}>${ATT_LABELS[a]}</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+
+  // Homework
+  document.getElementById('adminEditHomework').innerHTML = sts.map(s=>{
+    const hw=hwVal(hwMap[s]);
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="min-width:60px;font-weight:700;font-size:14px">${s}</span>
+      <select id="adm_hw_${s.replace(/\s/g,'_')}" style="background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:6px 10px;color:var(--text);font-family:inherit;font-size:13px;outline:none;cursor:pointer">
+        ${HW_STATES.map(h=>`<option value="${h}"${h===hw?' selected':''}>${HW_LABELS[h]}</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+
+  // Rating
+  document.getElementById('adminEditRating').innerHTML = sts.map(s=>{
+    const r=ratingMap[s]||0;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="min-width:60px;font-weight:700;font-size:14px">${s}</span>
+      <select id="adm_rat_${s.replace(/\s/g,'_')}" style="background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:6px 10px;color:var(--text);font-family:inherit;font-size:13px;outline:none;cursor:pointer">
+        <option value="0"${r===0?' selected':''}>未評分</option>
+        ${[1,2,3,4,5].map(i=>`<option value="${i}"${r===i?' selected':''}>${'⭐'.repeat(i)} ${i}分</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+
+  // Exams
+  document.getElementById('adminEditExams').innerHTML = entryExams.map((ex,ei)=>{
+    const isGrade=ex.mode==='grade';
+    return `<div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:var(--teal)">考試 ${ei+1}</span>
+        <input value="${ex.range||''}" placeholder="考試範圍"
+          id="adm_ex_range_${ei}"
+          style="flex:1;min-width:120px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:6px 10px;color:var(--text);font-family:inherit;font-size:13px;outline:none">
+        <span style="font-size:12px;color:var(--muted)">模式：${isGrade?'等第':'分數'}　滿分：${ex.maxScore||100}</span>
+      </div>
+      ${sts.map(s=>{
+        const val=ex.scores?.[s]||'';
+        const input=isGrade
+          ? `<select id="adm_sc_${ei}_${s.replace(/\s/g,'_')}" style="width:90px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:13px;cursor:pointer;outline:none"><option value="">—</option>${GRADES.map(g=>`<option value="${g}"${g===val?' selected':''}>${g}</option>`).join('')}</select>`
+          : `<input type="number" id="adm_sc_${ei}_${s.replace(/\s/g,'_')}" value="${val}" placeholder="—" min="0" style="width:72px;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:14px;text-align:center;outline:none">`;
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="min-width:60px;font-weight:700;font-size:14px">${s}</span>${input}</div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
+  // Course info
+  document.getElementById('adminEditProgress').value = entry.todayProgress||'';
+  document.getElementById('adminEditHomeworkNote').value = entry.todayHomework||'';
+  document.getElementById('adminEditNextExam').value = entry.nextExam||'';
+  document.getElementById('adminEditNotes').value = entry.notes||'';
+  document.getElementById('adminEditDate').value = entry.date||'';
+  document.getElementById('adminEditWeekday').value = entry.weekday||'';
+
+  modal.classList.add('show');
+};
+
+window.closeAdminEditModal = function() {
+  document.getElementById('adminEditModal').classList.remove('show');
+  adminEditingEntry = null;
+};
+
+window.saveAdminEdit = async function() {
+  if (!adminEditingEntry) return;
+  const entry = adminEditingEntry;
+  const sts   = entry.students||[];
+  const entryExams = entry.exams?.length
+    ? entry.exams
+    : (Object.keys(entry.scores||{}).length
+        ? [{id:0, range:'', mode:'score', maxScore:entry.maxScore||100, scores:{...entry.scores}}]
+        : [{id:0, range:'', mode:'score', maxScore:100, scores:{}}]);
+
+  // Collect attendance
+  const newAtt = {};
+  sts.forEach(s=>{
+    const el=document.getElementById('adm_att_'+s.replace(/\s/g,'_'));
+    newAtt[s]=el?el.value:'present';
+  });
+  // Collect homework
+  const newHw = {};
+  sts.forEach(s=>{
+    const el=document.getElementById('adm_hw_'+s.replace(/\s/g,'_'));
+    newHw[s]=el?el.value:'good';
+  });
+  // Collect rating
+  const newRating = {};
+  sts.forEach(s=>{
+    const el=document.getElementById('adm_rat_'+s.replace(/\s/g,'_'));
+    newRating[s]=el?parseInt(el.value)||0:0;
+  });
+  // Collect exams
+  const newExams = entryExams.map((ex,ei)=>{
+    const newScores={};
+    sts.forEach(s=>{
+      const el=document.getElementById(`adm_sc_${ei}_${s.replace(/\s/g,'_')}`);
+      newScores[s]=el?el.value:'';
+    });
+    const rangeEl=document.getElementById(`adm_ex_range_${ei}`);
+    return {...ex, range:rangeEl?rangeEl.value:ex.range, scores:newScores};
+  });
+
+  const updated = {
+    ...entry,
+    date: document.getElementById('adminEditDate').value||entry.date,
+    weekday: document.getElementById('adminEditWeekday').value||entry.weekday,
+    attendance: newAtt, homework: newHw, classRating: newRating, exams: newExams,
+    todayProgress: document.getElementById('adminEditProgress').value,
+    todayHomework: document.getElementById('adminEditHomeworkNote').value,
+    nextExam: document.getElementById('adminEditNextExam').value,
+    notes: document.getElementById('adminEditNotes').value,
+    editedByAdmin: true, editedAt: Date.now()
+  };
+  delete updated._id;
+
+  showLoading('儲存中...');
+  try {
+    await updateDoc(doc(db,'entries',entry._id), updated);
+    showToast('✅ 日誌已更新');
+    closeAdminEditModal();
+    await adminLoadAll();
+    adminRenderEntries();
+  } catch(e) { showToast('❌ 儲存失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+// ── ADMIN CLASS REPORT ──
+window.generateClassReport = function() {
+  const classId = document.getElementById('classReportSelect').value;
+  const startStr = document.getElementById('classReportStart').value;
+  const endStr   = document.getElementById('classReportEnd').value;
+  if (!classId) { showToast('請選擇班級','error'); return; }
+
+  const startMMDD = parseMMDD(startStr);
+  const endMMDD   = parseMMDD(endStr);
+
+  const classEntries = allEntries.filter(e=>{
+    if (e.className !== classId) return false;
+    if (!startMMDD||!endMMDD) return true;
+    const d=entryDateToMMDD(e.date);
+    return d&&d>=startMMDD&&d<=endMMDD;
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+
+  const outEl = document.getElementById('classReportOutput');
+  if (!classEntries.length) {
+    outEl.innerHTML='<div style="color:var(--muted);padding:20px;text-align:center">此範圍內無資料</div>';
+    return;
+  }
+
+  // Normalize entries: ensure all have e.exams (compat with old e.scores)
+  const normalizedEntries = classEntries.map(e => {
+    if (e.exams?.length) return e;
+    if (Object.keys(e.scores||{}).some(k=>e.scores[k]!==''&&e.scores[k]!=null)) {
+      return {...e, exams:[{id:0,range:'',mode:'score',maxScore:e.maxScore||100,scores:e.scores}]};
+    }
+    return {...e, exams:[]};
+  });
+
+  const dates   = normalizedEntries.map(e=>e.date);
+  const allStus = [...new Set(normalizedEntries.flatMap(e=>e.students||[]))];
+  const className = normalizedEntries[0].className||classId;
+  const teacherName = normalizedEntries[0].teacherName||'';
+
+  let html = `<div style="font-size:16px;font-weight:900;color:var(--purple);margin-bottom:4px">🏫 ${className}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">授課老師：${teacherName}　共 ${normalizedEntries.length} 筆記錄　${startStr||''}${startStr&&endStr?' ～ ':''}${endStr||''}</div>`;
+
+  html += buildAttTable(normalizedEntries, dates, allStus);
+  html += buildHwTable(normalizedEntries, dates, allStus);
+
+  const allExamSlots = Math.max(...normalizedEntries.map(e=>(e.exams||[]).length), 0);
+  for (let ei=0; ei<allExamSlots; ei++) {
+    const scoreEntries = normalizedEntries.filter(e=>(e.exams||[])[ei]);
+    if (scoreEntries.length) {
+      const label = scoreEntries[0].exams[ei].range || `考試${ei+1}`;
+      html += adminBuildScoreTable(scoreEntries, allStus, ei, label);
+    }
+  }
+  html += buildRatingTable(normalizedEntries, dates, allStus);
+
+  document.getElementById('adminPrintArea').innerHTML=`<div style="font-family:'Noto Sans TC',sans-serif;padding:20px;color:#000;background:#fff"><h2>百宏文教機構 · 班級報表</h2>${html}</div>`;
+  outEl.innerHTML = html;
+  showToast('✅ 班級報表已產生');
+};
+
+function buildRatingTable(es, dates, students) {
+  if (!es.some(e=>students.some(s=>(e.classRating||{})[s]>0))) return '';
+  let t=`<div style="margin-bottom:20px"><div style="font-size:14px;font-weight:700;color:var(--teal);margin-bottom:10px">⭐ 上課評分</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:rgba(255,255,255,.06)">
+      <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">學生</th>
+      ${dates.map(d=>`<th style="padding:8px 6px;border:1px solid var(--border);min-width:52px;text-align:center">${d}</th>`).join('')}
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">平均</th>
+    </tr></thead><tbody>`;
+  students.forEach(s=>{
+    const vals=es.map(e=>(e.classRating||{})[s]||0);
+    const rated=vals.filter(v=>v>0);
+    const avg=rated.length?(rated.reduce((a,b)=>a+b,0)/rated.length).toFixed(1):null;
+    t+=`<tr><td style="padding:8px 10px;border:1px solid var(--border);font-weight:700">${s}</td>
+      ${vals.map(v=>`<td style="padding:6px;border:1px solid var(--border);text-align:center;color:${v?RATING_COLORS[v]:'var(--muted)'}">${v?'⭐'.repeat(v):'-'}</td>`).join('')}
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:${avg?RATING_COLORS[Math.round(parseFloat(avg))]:'var(--muted)'}">${avg?avg+'分':'-'}</td>
+    </tr>`;
+  });
+  return t+`</tbody></table></div></div>`;
+}
+
+function adminBuildScoreTable(scoreEntries, students, examIdx, label) {
+  let t=`<div style="margin-bottom:20px"><div style="font-size:14px;font-weight:700;color:var(--teal);margin-bottom:10px">🏆 ${label}</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:rgba(255,255,255,.06)">
+      <th style="padding:8px 10px;text-align:left;border:1px solid var(--border)">學生</th>
+      ${scoreEntries.map(e=>{const ex=(e.exams||[])[examIdx];return `<th style="padding:8px 6px;border:1px solid var(--border);min-width:70px;text-align:center">${e.date}<br><span style="font-size:10px;color:var(--muted)">${ex?.mode==='grade'?'等第':'滿分'+(ex?.maxScore||100)}</span></th>`;}).join('')}
+      <th style="padding:8px;border:1px solid var(--border);text-align:center">平均%</th>
+    </tr></thead><tbody>`;
+  students.forEach(s=>{
+    const pcts=scoreEntries.map(e=>{const ex=(e.exams||[])[examIdx];const v=ex?.scores?.[s];if(!v)return null;if(GRADES.includes(String(v)))return null;return Math.round(parseFloat(v)/(ex.maxScore||100)*100);}).filter(p=>p!==null);
+    const avg=pcts.length?Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length):null;
+    t+=`<tr><td style="padding:8px 10px;border:1px solid var(--border);font-weight:700">${s}</td>
+      ${scoreEntries.map(e=>{const ex=(e.exams||[])[examIdx];const v=ex?.scores?.[s];const has=v!==''&&v!=null;const isGrade=has&&GRADES.includes(String(v));if(isGrade){return `<td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:700;color:${GRADE_COLORS[v]||'var(--text)'}">${v}</td>`;}const pct=has?Math.round(parseFloat(v)/(ex.maxScore||100)*100):null;const bg=!has?'':pct>=90?'rgba(86,204,178,.25)':pct>=60?'rgba(255,209,102,.2)':'rgba(255,107,107,.25)';const tc=!has?'var(--muted)':pct>=90?'#56ccb2':pct>=60?'#ffd166':'#ff6b6b';return `<td style="padding:8px;border:1px solid var(--border);text-align:center;background:${bg};color:${tc};font-weight:700">${has?`${v}<br><span style="font-size:10px">${pct}%</span>`:'—'}</td>`;}).join('')}
+      <td style="padding:8px;border:1px solid var(--border);text-align:center;font-weight:900;color:${avg===null?'var(--muted)':avg>=90?'#56ccb2':avg>=60?'#ffd166':'#ff6b6b'}">${avg!==null?avg+'%':'—'}</td>
+    </tr>`;
+  });
+  return t+`</tbody></table></div></div>`;
+}
+
+window.adminPrintClassReport = function() {
+  const pa=document.getElementById('adminPrintArea');
+  if(!pa.innerHTML){showToast('請先產生報表','error');return;}
+  pa.style.display='block'; window.print(); setTimeout(()=>pa.style.display='none',1000);
+};
+
+// ── PROMOTE / TRANSFER ──
+let allClasses   = []; // loaded fresh for promote tab
+let promoteSource = null;
+
+async function renderPromoteTab() {
+  // Load all classes fresh
+  showLoading('載入班級...');
+  try {
+    const snap = await getDocs(collection(db,'classes'));
+    allClasses = snap.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  } catch(e) { console.error(e); allClasses=[]; }
+  hideLoading();
+
+  renderPromoteClassList();
+  populateTransferSelects();
+  document.getElementById('promotePanel').style.display='none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// 👥 班級協作老師（共同授課 / 職務代理）
+// ══════════════════════════════════════════════════════════════
+let memberPanelClassId = null;
+
+window.openMemberPanel = function(classId) {
+  memberPanelClassId = classId;
+  const cls = allClasses.find(c => c._id === classId);
+  if (!cls) return;
+  const owner = teachers.find(t => t.userId === cls.teacherId);
+  const members = cls.members || [];
+  const available = teachers.filter(t =>
+    t.userId !== cls.teacherId && !members.some(m => m.teacherId === t.userId));
+
+  let panel = document.getElementById('memberPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'memberPanel';
+    document.getElementById('promoteClassList').parentNode.insertBefore(panel, document.getElementById('promoteClassList'));
+  }
+  panel.innerHTML = `
+    <div class="card" style="border:1px solid var(--purple);background:rgba(123,97,255,.06);margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div class="card-title" style="margin:0">👥 ${esc(cls.name)} — 協作老師</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeMemberPanel()">✕ 關閉</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        主要負責：<strong style="color:var(--text)">${esc(owner?.name || cls.teacherId)}</strong>　
+        協作老師可以填寫、編輯這個班的日誌，並上傳作業抽查照片。
+      </div>
+
+      ${members.length ? `<div style="margin-bottom:14px">
+        ${members.map((m,i) => {
+          const on = m.type!=='sub' || ((!m.from||m.from<=todayISO()) && (!m.to||todayISO()<=m.to));
+          return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface3);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;opacity:${on?1:.5}">
+            <div style="flex:1">
+              <span style="font-size:14px;font-weight:700">${esc(m.teacherName)}</span>
+              <span style="font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;margin-left:8px;background:${m.type==='sub'?'rgba(255,209,102,.15);color:var(--yellow)':'rgba(123,97,255,.15);color:var(--purple)'}">
+                ${m.type==='sub' ? '🔄 職務代理' : '👥 共同授課'}
+              </span>
+              ${m.type==='sub' ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">
+                ${m.from||'不限'} ～ ${m.to||'不限'}${on?'':'　·　已失效'}
+              </div>` : ''}
+            </div>
+            <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="removeMember(${i})">移除</button>
+          </div>`;
+        }).join('')}
+      </div>` : '<div style="font-size:13px;color:var(--muted);margin-bottom:14px">目前沒有協作老師</div>'}
+
+      ${available.length ? `
+      <div style="padding-top:14px;border-top:1px solid var(--border)">
+        <label class="field-label">新增協作老師</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <select class="select-input" id="memberTeacherSel" style="margin:0">
+            ${available.map(t => `<option value="${esc(t.userId)}" data-name="${esc(t.name)}">${esc(t.name)}</option>`).join('')}
+          </select>
+          <select class="select-input" id="memberTypeSel" onchange="toggleMemberDates()" style="margin:0">
+            <option value="co">👥 共同授課（無期限）</option>
+            <option value="sub">🔄 職務代理（限期間）</option>
+          </select>
+        </div>
+        <div id="memberDateRow" style="display:none;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div><label class="field-label">代理起日</label><input type="date" class="field-input" id="memberFrom" style="margin:0"></div>
+          <div><label class="field-label">代理迄日</label><input type="date" class="field-input" id="memberTo" style="margin:0"></div>
+        </div>
+        <button class="btn btn-purple" style="width:100%;padding:11px" onclick="addMember()">➕ 加入</button>
+      </div>` : '<div style="font-size:12px;color:var(--muted)">沒有其他老師可以加入</div>'}
+    </div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'center'});
+};
+
+window.closeMemberPanel = function() {
+  memberPanelClassId = null;
+  const p = document.getElementById('memberPanel');
+  if (p) p.remove();
+};
+
+window.toggleMemberDates = function() {
+  const isSub = document.getElementById('memberTypeSel').value === 'sub';
+  document.getElementById('memberDateRow').style.display = isSub ? 'grid' : 'none';
+};
+
+async function saveMembers(members) {
+  const cls = allClasses.find(c => c._id === memberPanelClassId);
+  if (!cls) return;
+  showLoading('儲存中...');
+  try {
+    // memberIds 是給 Firestore array-contains 查詢用的扁平索引
+    await updateDoc(doc(db,'classes',cls._id), {
+      members,
+      memberIds: members.map(m => m.teacherId),
+      updatedAt: Date.now()
+    });
+    cls.members   = members;
+    cls.memberIds = members.map(m => m.teacherId);
+    renderPromoteClassList();
+    openMemberPanel(cls._id);
+    showToast('💾 已更新協作老師');
+  } catch(e) { showToast('❌ 儲存失敗：'+e.message,'error'); }
+  hideLoading();
+}
+
+window.addMember = function() {
+  const sel  = document.getElementById('memberTeacherSel');
+  const type = document.getElementById('memberTypeSel').value;
+  const opt  = sel.selectedOptions[0];
+  if (!opt) return;
+  const from = type==='sub' ? document.getElementById('memberFrom').value : '';
+  const to   = type==='sub' ? document.getElementById('memberTo').value   : '';
+  if (type==='sub' && !to) { showToast('職務代理請至少填寫迄日','error'); return; }
+  if (from && to && from > to) { showToast('起日不能晚於迄日','error'); return; }
+
+  const cls = allClasses.find(c => c._id === memberPanelClassId);
+  saveMembers([...(cls.members||[]), {
+    teacherId: opt.value, teacherName: opt.dataset.name, type, from, to, addedAt: Date.now()
+  }]);
+};
+
+window.removeMember = function(idx) {
+  const cls = allClasses.find(c => c._id === memberPanelClassId);
+  const m = (cls.members||[])[idx];
+  if (!m) return;
+  if (!confirm(`確定將 ${m.teacherName} 從「${cls.name}」移除？\n他將無法再存取這個班級的日誌。`)) return;
+  saveMembers((cls.members||[]).filter((_,i) => i !== idx));
+};
+
+function renderPromoteClassList() {
+  const el = document.getElementById('promoteClassList');
+  if (!allClasses.length) { el.innerHTML='<div style="color:var(--muted);font-size:13px">尚無班級資料</div>'; return; }
+
+  // Group by teacher
+  const byTeacher = {};
+  allClasses.forEach(c => {
+    const tid = c.teacherId||'unknown';
+    if (!byTeacher[tid]) byTeacher[tid] = {name: teachers.find(t=>t.userId===tid)?.name||tid, classes:[]};
+    byTeacher[tid].classes.push(c);
+  });
+
+  el.innerHTML = Object.values(byTeacher).map(g => `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:1px;margin-bottom:8px;">👤 ${g.name}</div>
+      ${g.classes.map(c => {
+        const isArchived = c.archived;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:${isArchived?'rgba(255,255,255,.03)':'rgba(255,255,255,.05)'};border:1px solid ${isArchived?'var(--border)':'rgba(86,204,178,.15)'};border-radius:10px;margin-bottom:6px;opacity:${isArchived?'.5':'1'}">
+          <div style="flex:1">
+            <span style="font-size:14px;font-weight:700">${c.name}</span>
+            ${isArchived?'<span style="margin-left:8px;font-size:11px;background:rgba(255,255,255,.1);border-radius:10px;padding:2px 8px;color:var(--muted)">已封存</span>':''}
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">${(c.students||[]).length}人：${(c.students||[]).slice(0,4).join('、')}${(c.students||[]).length>4?'…':''}</div>
+            ${(c.members||[]).length ? `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px">
+              ${c.members.map(m => {
+                const on = m.type!=='sub' || ((!m.from||m.from<=todayISO()) && (!m.to||todayISO()<=m.to));
+                const col = m.type==='sub' ? 'var(--yellow)' : 'var(--purple)';
+                return `<span style="font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;background:${col}1f;color:${col};opacity:${on?1:.4}">
+                  ${m.type==='sub'?'🔄':'👥'} ${esc(m.teacherName)}${m.type==='sub'&&m.to?`（至 ${m.to}）`:''}${on?'':'　已失效'}
+                </span>`;
+              }).join('')}
+            </div>` : ''}
+          </div>
+          ${!isArchived ? `
+            <button onclick="openAdminClassModal('${c._id}')" style="background:rgba(255,255,255,.07);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">✏️ 編輯</button>
+            <button onclick="openMemberPanel('${c._id}')" style="background:rgba(123,97,255,.15);border:1px solid rgba(123,97,255,.3);border-radius:8px;padding:7px 12px;color:var(--purple);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">👥 協作</button>
+            <button onclick="openPromotePanel('${c._id}')" style="background:linear-gradient(135deg,var(--teal),#2ecc71);border:none;border-radius:8px;padding:7px 14px;color:#0d1117;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">🎓 升班</button>
+            <button onclick="archiveClass('${c._id}','${c.name.replace(/'/g,"\\'")}') " style="background:rgba(255,107,107,.15);border:1px solid rgba(255,107,107,.3);border-radius:8px;padding:7px 12px;color:var(--red);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">📦 封存</button>
+          ` : `
+            <button onclick="unarchiveClass('${c._id}','${c.name.replace(/'/g,"\\'")}') " style="background:rgba(255,255,255,.07);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">🔓 解封</button>
+          `}
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+window.openPromotePanel = function(classId) {
+  const cls = allClasses.find(c=>c._id===classId);
+  if (!cls) return;
+  promoteSource = cls;
+
+  const teacher = teachers.find(t=>t.userId===cls.teacherId);
+  document.getElementById('promoteSourceName').textContent  = cls.name;
+  document.getElementById('promoteSourceName2').textContent = cls.name;
+  document.getElementById('promoteSourceTeacher').textContent = teacher?.name||cls.teacherId;
+  document.getElementById('promoteNewName').value = '';
+  document.getElementById('promoteNewName').placeholder = '例：' + cls.name.replace(/五/g,'六').replace(/六/g,'國一');
+
+  // Teacher select
+  const tSel = document.getElementById('promoteNewTeacher');
+  tSel.innerHTML = '<option value="">-- 沿用原老師 --</option>' +
+    teachers.map(t=>`<option value="${t.userId}"${t.userId===cls.teacherId?' selected':''}>${t.name}</option>`).join('');
+
+  // Student list (editable)
+  renderPromoteStudents([...cls.students]);
+
+  document.getElementById('promotePanel').style.display='block';
+  document.getElementById('promotePanel').scrollIntoView({behavior:'smooth', block:'start'});
+};
+
+let promoteStudents = [];
+function renderPromoteStudents(list) {
+  promoteStudents = list;
+  const el = document.getElementById('promoteStudentList');
+  el.innerHTML = promoteStudents.map((s,i) => `
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <input value="${s}" placeholder="學生姓名"
+        style="flex:1;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px;color:var(--text);font-family:inherit;font-size:14px;outline:none"
+        oninput="promoteStudents[${i}]=this.value">
+      <button onclick="removePromoteStudent(${i})" style="background:rgba(255,107,107,.15);border:1px solid rgba(255,107,107,.3);border-radius:8px;padding:6px 10px;color:var(--red);font-family:inherit;cursor:pointer;font-size:13px;">✕</button>
+    </div>`).join('');
+}
+
+window.addPromoteStudent = function() {
+  renderPromoteStudents([...promoteStudents, '']);
+  // Focus last input
+  setTimeout(()=>{
+    const inputs = document.querySelectorAll('#promoteStudentList input');
+    if (inputs.length) inputs[inputs.length-1].focus();
+  },50);
+};
+window.removePromoteStudent = function(i) {
+  promoteStudents.splice(i,1);
+  renderPromoteStudents([...promoteStudents]);
+};
+window.cancelPromote = function() {
+  document.getElementById('promotePanel').style.display='none';
+  promoteSource=null;
+};
+
+window.archiveClass = async function(classId, className) {
+  if (!confirm(`確定封存班級「${className}」？\n\n封存後老師無法再填寫新日誌，但所有歷史記錄保留可查閱。\n可隨時解封。`)) return;
+  showLoading('封存中...');
+  try {
+    await updateDoc(doc(db,'classes',classId), {
+      archived: true,
+      archivedAt: Date.now(),
+      archivedNote: '結業封存'
+    });
+    showToast(`📦 「${className}」已封存`);
+    await renderPromoteTab();
+  } catch(e) { showToast('❌ 封存失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.unarchiveClass = async function(classId, className) {
+  if (!confirm(`確定解封「${className}」？\n\n解封後老師可以繼續填寫日誌。`)) return;
+  showLoading('解封中...');
+  try {
+    await updateDoc(doc(db,'classes',classId), {
+      archived: false,
+      archivedAt: null,
+      archivedNote: null
+    });
+    showToast(`🔓 「${className}」已解封`);
+    await renderPromoteTab();
+  } catch(e) { showToast('❌ 解封失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.executePromote = async function() {
+  if (!promoteSource) return;
+  const newName    = document.getElementById('promoteNewName').value.trim();
+  const newTeacher = document.getElementById('promoteNewTeacher').value || promoteSource.teacherId;
+  const students   = promoteStudents.map(s=>s.trim()).filter(Boolean);
+
+  if (!newName) { showToast('請填寫新班級名稱','error'); return; }
+  if (!students.length) { showToast('請至少保留一位學生','error'); return; }
+  if (!confirm(`確定執行升班？\n\n舊班「${promoteSource.name}」→ 封存\n新班「${newName}」→ 建立\n\n此操作無法復原。`)) return;
+
+  showLoading('執行升班中...');
+  try {
+    const teacher = teachers.find(t=>t.userId===newTeacher);
+
+    // 1. Archive old class
+    await updateDoc(doc(db,'classes',promoteSource._id), {
+      archived: true,
+      archivedAt: Date.now(),
+      archivedNote: `升班至 ${newName}`
+    });
+
+    // 2. Create new class
+    await addDoc(collection(db,'classes'), {
+      teacherId: newTeacher,
+      teacherName: teacher?.name||newTeacher,
+      name: newName,
+      students,
+      createdAt: Date.now(),
+      promotedFrom: promoteSource._id,
+      promotedFromName: promoteSource.name
+    });
+
+    showToast(`✅ 升班完成！「${promoteSource.name}」已封存，「${newName}」已建立`);
+    cancelPromote();
+    await renderPromoteTab();
+  } catch(e) { showToast('❌ 升班失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+function populateTransferSelects() {
+  const activeCls = allClasses.filter(c=>!c.archived);
+  const cSel = document.getElementById('transferClassSelect');
+  const tSel = document.getElementById('transferTeacherSelect');
+  cSel.innerHTML = '<option value="">-- 選擇班級 --</option>'+activeCls.map(c=>`<option value="${c._id}">${c.name}（${teachers.find(t=>t.userId===c.teacherId)?.name||c.teacherId}）</option>`).join('');
+  tSel.innerHTML = '<option value="">-- 選擇新老師 --</option>'+teachers.map(t=>`<option value="${t.userId}">${t.name}</option>`).join('');
+}
+
+window.transferClass = async function(mode) {
+  const classId   = document.getElementById('transferClassSelect').value;
+  const newTchId  = document.getElementById('transferTeacherSelect').value;
+  if (!classId)  { showToast('請選擇班級','error'); return; }
+  if (!newTchId) { showToast('請選擇新老師','error'); return; }
+
+  const cls      = allClasses.find(c=>c._id===classId);
+  const newTch   = teachers.find(t=>t.userId===newTchId);
+  const oldTch   = teachers.find(t=>t.userId===cls?.teacherId);
+  if (!cls||!newTch) { showToast('資料錯誤','error'); return; }
+  if (cls.teacherId===newTchId) { showToast('新老師與原老師相同','error'); return; }
+
+  const actionText = mode==='move'?`轉移（${oldTch?.name} → ${newTch.name}，${oldTch?.name} 將移除此班）`:`複製（${oldTch?.name} 保留，${newTch.name} 新增一份）`;
+  if (!confirm(`確定${actionText}？\n\n班級：${cls.name}`)) return;
+
+  showLoading('處理中...');
+  try {
+    if (mode==='move') {
+      // Transfer: update class teacherId + update all entries
+      await updateDoc(doc(db,'classes',classId), {
+        teacherId: newTchId,
+        teacherName: newTch.name
+      });
+      // Update all entries for this class
+      const eSnap = await getDocs(query(collection(db,'entries'), where('classId','==',classId)));
+      const batch = eSnap.docs.map(d => updateDoc(doc(db,'entries',d.id), {teacherId:newTchId, teacherName:newTch.name}));
+      await Promise.all(batch);
+      showToast(`✅ 班級「${cls.name}」已轉移給 ${newTch.name}`);
+    } else {
+      // Copy: create new class with new teacher
+      await addDoc(collection(db,'classes'), {
+        teacherId: newTchId,
+        teacherName: newTch.name,
+        name: cls.name,
+        students: [...cls.students],
+        createdAt: Date.now(),
+        copiedFrom: classId,
+        copiedFromTeacher: cls.teacherId
+      });
+      showToast(`✅ 班級「${cls.name}」已複製給 ${newTch.name}`);
+    }
+    await renderPromoteTab();
+  } catch(e) { showToast('❌ 操作失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+// ── ADMIN ACCOUNTS ──
+function renderTeachers() {
+  document.getElementById('teacherCount').textContent = teachers.length;
+  document.getElementById('teacherList').innerHTML = teachers.length ? teachers.map(t=>`
+    <div class="teacher-card">
+      <div class="teacher-info">
+        <div class="teacher-name-big">${t.name}</div>
+        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆${(t.aliases||[]).length?`　點名表姓名：${esc(t.aliases.join('、'))}`:''}${t.mustChangePassword?'　<span class="tag tag-yellow">登入會提醒改密碼</span>':''}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" title="點名表上印的姓名與帳號不同時，在這裡設定以便匯入時自動對應" onclick="setTeacherAliases('${t._id}')">🏷 點名表姓名</button>
+        <button class="btn btn-ghost btn-sm" onclick="renameTeacher('${t._id}','${t.userId}','${t.name.replace(/'/g,"\\'")}')">✏️ 改名</button>
+        <button class="btn btn-ghost btn-sm" onclick="resetPassword('${t._id}','${t.name}')">🔑 重設密碼</button>
+        <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="promptDelete('${t._id}','${t.name}')">🗑 刪除</button>
+      </div>
+    </div>`).join('') : '<div class="empty"><div class="empty-icon">👤</div><div>尚無老師帳號</div></div>';
+}
+
+// 建立一位老師：Auth 使用者 + teachers/{uid} + logins/{userId}
+// authEmail 可指定（重設密碼時換一個新信箱），否則用 {userId}@bhcs.local
+async function provisionTeacher(userId, name, pass, authEmail) {
+  const email = authEmail || (userId + AUTH_DOMAIN_SUFFIX);
+  const uid   = await createAuthUser(email, pass);
+  await setDoc(doc(db,'teachers',uid), { userId, name, authEmail:email, mustChangePassword:true, createdAt:Date.now() });
+  await setDoc(doc(db,'logins',userId), { authEmail:email, uid });
+  return uid;
+}
+
+// 要求所有老師下次登入時改密碼（給搬遷進來、還在用初始密碼的帳號用）
+window.requireAllPasswordChange = async function() {
+  if (!confirm(`全部 ${teachers.length} 位老師下次登入時會看到「建議改密碼」的提醒（可按稍後再說或不再提醒）。確定？`)) return;
+  showLoading('設定中...');
+  try {
+    for (const t of teachers) await updateDoc(doc(db,'teachers',t._id), { mustChangePassword:true, updatedAt:Date.now() });
+    teachers.forEach(t => t.mustChangePassword = true);
+    renderTeachers(); showToast('✅ 已設定，老師下次登入會看到提醒');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+// 備援主管帳號：用真實 Email 建一個 Auth 使用者，寫入 admins/{uid}；忘記密碼時可收重設信
+window.addBackupAdmin = async function() {
+  const email = (prompt('備援主管帳號的 Email（真實信箱，忘記密碼時會寄重設信到這裡）：') || '').trim();
+  if (!email) return;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith(AUTH_DOMAIN_SUFFIX)) { showToast('請輸入有效的真實 Email','error'); return; }
+  const pass = prompt(`設定「${email}」的登入密碼（至少 ${PASS_MIN} 碼）：`);
+  if (!pass) return;
+  if (pass.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  showLoading('建立備援主管帳號...');
+  try {
+    const uid = await createAuthUser(email, pass);
+    await setDoc(doc(db,'admins',uid), { email, createdAt:Date.now(), createdBy:currentUser.id });
+    showToast(`✅ 備援主管帳號已建立：${email}`);
+    await renderBackupAdmins();
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+};
+window.removeBackupAdmin = async function(uid, email) {
+  if (!confirm(`移除備援主管帳號「${email}」？（Auth 使用者仍在，但失去主管權限）`)) return;
+  try { await deleteDoc(doc(db,'admins',uid)); showToast('已移除'); await renderBackupAdmins(); }
+  catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+};
+async function renderBackupAdmins() {
+  const box = document.getElementById('backupAdminList'); if (!box) return;
+  try {
+    const snap = await getDocs(collection(db,'admins'));
+    const list = snap.docs.map(d => ({ _id:d.id, ...d.data() }));
+    box.innerHTML = list.length ? list.map(a => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border);font-size:13px">
+        <span>📧 ${esc(a.email)}${a._id===currentUser.uid?' <span class="tag tag-green">目前登入</span>':''}</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeBackupAdmin('${a._id}','${esc(a.email)}')">移除</button>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">尚未設定。建議至少建一個，否則主管密碼忘了只能到 Firebase 主控台處理。</div>';
+  } catch(e) { box.innerHTML = `<div style="font-size:12px;color:var(--red)">❌ ${esc(authErrMsg(e))}（規則可能尚未更新）</div>`; }
+}
+
+window.addTeacher = async function() {
+  const name  = document.getElementById('newName').value.trim();
+  const userId= document.getElementById('newUser').value.trim().toLowerCase();
+  const pass  = document.getElementById('newPass').value;
+  const pass2 = document.getElementById('newPass2').value;
+  if (!name||!userId||!pass) { showToast('請填寫所有欄位','error'); return; }
+  if (pass!==pass2)          { showToast('兩次密碼不一致','error'); return; }
+  if (pass.length<PASS_MIN)  { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  if (userId===ADMIN_USER)   { showToast('不能使用 admin 作為帳號','error'); return; }
+  if (!/^[a-z0-9._-]{2,30}$/.test(userId)) { showToast('帳號只能用英文小寫、數字、. _ -','error'); return; }
+  if (teachers.find(t=>t.userId===userId)) { showToast('此帳號已存在','error'); return; }
+  showLoading('新增帳號...');
+  try {
+    await provisionTeacher(userId, name, pass);
+    showToast(`✅ 已新增：${name}`);
+    ['newName','newUser','newPass','newPass2'].forEach(id=>document.getElementById(id).value='');
+    await adminLoadAll(); renderTeachers();
+  } catch(e) { showToast('❌ 新增失敗：'+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+};
+
+// 重設密碼：前端無法改別人的 Auth 密碼，改用「換一個新的 Auth 使用者」達成。
+// 舊 Auth 使用者失去 teachers 文件後規則上沒有任何權限，等同停用。
+// 點名表姓名（別名）：jretc 點名表的「教師姓名」與帳號姓名不同時用，匯入名冊會據此自動配對
+window.setTeacherAliases = async function(id) {
+  const t = teachers.find(x => x._id === id); if (!t) return;
+  const cur = (t.aliases||[]).join('、');
+  const v = prompt(`「${t.name}」在點名表上的姓名（多個用、分隔，清空＝移除）：`, cur);
+  if (v === null) return;
+  const aliases = v.split(/[\s,，、]+/).map(x => x.trim()).filter(Boolean);
+  showLoading('儲存中...');
+  try {
+    await updateDoc(doc(db,'teachers',id), { aliases, updatedAt:Date.now() });
+    t.aliases = aliases; renderTeachers();
+    showToast(aliases.length ? `🏷 ${t.name} ← ${aliases.join('、')}` : '已移除點名表姓名');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+window.resetPassword = async function(id,name) {
+  const t = teachers.find(x => x._id === id);
+  if (!t) return;
+  const newPass = prompt(`為「${name}」設定新密碼（至少 ${PASS_MIN} 碼）：`);
+  if (!newPass) return;
+  if (newPass.length<PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  showLoading('重設密碼...');
+  try {
+    const email = `${t.userId}-r${Date.now().toString(36)}${AUTH_DOMAIN_SUFFIX}`;
+    await provisionTeacher(t.userId, t.name, newPass, email);
+    await deleteDoc(doc(db,'teachers',id));
+    showToast(`🔑 ${name} 密碼已重設`);
+    await adminLoadAll(); renderTeachers();
+  } catch(e) { showToast('❌ 重設失敗：'+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+};
+
+window.promptDelete = function(id,name) {
+  deleteTargetId=id;
+  document.getElementById('deleteModalSub').textContent=`確定要刪除「${name}」的帳號嗎？`;
+  document.getElementById('deleteModal').classList.add('show');
+};
+window.closeModal   = function() { document.getElementById('deleteModal').classList.remove('show'); deleteTargetId=null; };
+window.confirmDelete= async function() {
+  if (!deleteTargetId) return;
+  const targetId = deleteTargetId;   // ★ 先存起來，closeModal() 會把 deleteTargetId 清成 null
+  closeModal();
+  showLoading('刪除中...');
+  try {
+    const t = teachers.find(x => x._id === targetId);
+    await deleteDoc(doc(db,'teachers',targetId));
+    if (t?.userId) await deleteDoc(doc(db,'logins',t.userId)).catch(()=>{});
+    // 同步取消這位老師在電訪名冊上的所有配對
+    let cleared = 0;
+    if (t?.userId) {
+      const snap = await getDocs(query(collection(db,'ctStudents'), where('teacherIds','array-contains',t.userId)));
+      for (const d of snap.docs) {
+        const s = d.data();
+        const ct = { ...(s.classTeachers||{}) };
+        Object.keys(ct).forEach(c => { if (ct[c] === t.userId) delete ct[c]; });
+        await updateDoc(doc(db,'ctStudents',d.id), { teacherIds:(s.teacherIds||[]).filter(x => x !== t.userId), classTeachers:ct, updatedAt:Date.now() });
+        cleared++;
+      }
+    }
+    teachers=teachers.filter(t=>t._id!==targetId); renderTeachers(); showToast(`🗑 帳號已刪除${cleared?`，已取消 ${cleared} 位學生的配對`:''}`);
+  }
+  catch(e) { console.error(e); showToast('❌ 刪除失敗：'+e.message,'error'); }
+  hideLoading(); deleteTargetId=null;
+};
+
+// ══════════════════════════════════════════════════════════════
+// 📸 任務派遣 / 作業抽查 (TASK DISPATCH)
+// ══════════════════════════════════════════════════════════════
+// Firestore collections used by this module:
+//   tasks           - admin 派遣的抽查任務
+//   taskSubs        - 老師的繳交記錄 (一位老師 x 一個任務 x 一個班級 = 一筆)
+//   taskPhotos      - 照片本體 (PHOTO_BACKEND='firestore' 時才使用)
+// ──────────────────────────────────────────────────────────────
+
+// ── 照片儲存設定 ──────────────────────────────────────────────
+// 'firestore'  : 壓縮後存進 Firestore（零設定、免信用卡；免費額度 1GiB ≈ 8000 張）
+// 'cloudinary' : 存到 Cloudinary（免費 25GB；需先建立 unsigned upload preset）
+const PHOTO_BACKEND     = 'firestore';
+const CLOUDINARY_CLOUD  = '';            // 例：'dxxxxxx'
+const CLOUDINARY_PRESET = '';            // 例：'bhcs_unsigned'
+const PHOTO_MAX_EDGE    = 1400;          // 壓縮後最長邊 (px)
+const PHOTO_QUALITY     = 0.72;          // JPEG 品質
+const PHOTO_DOC_LIMIT   = 900 * 1024;    // Firestore 單筆文件安全上限
+
+// ── 工具：HTML escape（防止學生/班級名稱中的特殊字元破版或注入）──
+function esc(v) {
+  return String(v==null?'':v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+window.esc = esc;
+
+// ── State ──
+let allTasks       = [];   // admin: 所有任務
+let myTasks        = [];   // teacher: 指派給我的任務
+let taskSubsCache  = {};   // { taskId: [sub,...] }
+let taskPhotoCache = {};   // { photoDocId: dataUrl }
+let activeTaskId   = null; // 老師端目前展開的任務
+let pendingPhotos  = [];   // [{dataUrl, size}] 尚未送出的照片
+let adminOpenTaskId= null; // admin 端目前展開的任務
+
+const TASK_STATUS_LABEL = { open:'進行中', closed:'已結束' };
+const SUB_STATUS = {
+  submitted: { label:'待審核', color:'var(--yellow)', bg:'rgba(255,209,102,.15)' },
+  approved:  { label:'已通過', color:'var(--teal)',   bg:'rgba(86,204,178,.15)' },
+  rejected:  { label:'需補件', color:'var(--red)',    bg:'rgba(255,107,107,.15)' }
+};
+
+// ── 工具：日期 ──
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function isOverdue(task) {
+  return task.dueDate && task.dueDate < todayISO() && task.status !== 'closed';
+}
+
+// 統一新舊格式：新任務有 targets（班級層級），舊任務只有 assignees（老師層級）
+function taskTargets(task) {
+  if (task.targets?.length) return task.targets;
+  const ids = task.assignees?.length ? task.assignees : teachers.map(t => t.userId);
+  return ids.map(id => ({
+    classId: '', className: '',
+    teacherId: id,
+    teacherName: teachers.find(t => t.userId === id)?.name || id
+  }));
+}
+
+// 這個任務指派給某位老師的班級 id 清單；回傳 null 代表「不限班級」（舊任務）
+function taskClassIdsFor(task, teacherId) {
+  if (!task.targets?.length) return null;
+  return task.targets.filter(x => x.teacherId === teacherId).map(x => x.classId);
+}
+
+// ── 工具：圖片壓縮 ──
+function compressImage(file, maxEdge = PHOTO_MAX_EDGE, quality = PHOTO_QUALITY) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) { reject(new Error('請選擇圖片檔')); return; }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      const scale = Math.min(1, maxEdge / Math.max(w, h));
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);   // 避免 PNG 透明變黑
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+
+      // 若超過 Firestore 單筆上限則逐步降畫質
+      let q = quality, out = cv.toDataURL('image/jpeg', q);
+      while (PHOTO_BACKEND === 'firestore' && out.length > PHOTO_DOC_LIMIT && q > 0.3) {
+        q -= 0.12;
+        out = cv.toDataURL('image/jpeg', q);
+      }
+      if (PHOTO_BACKEND === 'firestore' && out.length > PHOTO_DOC_LIMIT) {
+        reject(new Error('照片太大，請重新拍攝或裁切')); return;
+      }
+      resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('圖片讀取失敗')); };
+    img.src = url;
+  });
+}
+
+// ── 工具：上傳單張照片，回傳 photo ref ──
+async function uploadPhoto(dataUrl, meta) {
+  if (PHOTO_BACKEND === 'cloudinary') {
+    if (!CLOUDINARY_CLOUD || !CLOUDINARY_PRESET) throw new Error('尚未設定 Cloudinary');
+    const fd = new FormData();
+    fd.append('file', dataUrl);
+    fd.append('upload_preset', CLOUDINARY_PRESET);
+    const r = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method:'POST', body:fd });
+    const j = await r.json();
+    if (!j.secure_url) throw new Error(j.error?.message || '雲端上傳失敗');
+    return { kind:'url', url:j.secure_url };
+  }
+  const ref = await addDoc(collection(db, 'taskPhotos'), { ...meta, data:dataUrl, createdAt:Date.now() });
+  taskPhotoCache[ref.id] = dataUrl;
+  return { kind:'doc', id:ref.id };
+}
+
+// ── 工具：取得照片可顯示的 src ──
+async function resolvePhotoSrc(p) {
+  if (p.kind === 'url') return p.url;
+  if (taskPhotoCache[p.id]) return taskPhotoCache[p.id];
+  return null;   // 需由 loadTaskPhotos() 批次載入
+}
+
+async function loadTaskPhotos(taskId) {
+  try {
+    const snap = await getDocs(query(collection(db,'taskPhotos'), where('taskId','==',taskId)));
+    snap.docs.forEach(d => { taskPhotoCache[d.id] = d.data().data; });
+  } catch(e) { console.error('loadTaskPhotos:', e); }
+}
+
+// ── 資料載入 ──
+async function loadTasks() {
+  try {
+    const snap = await getDocs(collection(db,'tasks'));
+    allTasks = snap.docs.map(d => ({_id:d.id, ...d.data()}))
+      .sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+  } catch(e) { console.error('loadTasks:', e); allTasks = []; }
+}
+
+async function loadTaskSubs(taskId) {
+  try {
+    const snap = await getDocs(query(collection(db,'taskSubs'), where('taskId','==',taskId)));
+    taskSubsCache[taskId] = snap.docs.map(d => ({_id:d.id, ...d.data()}));
+  } catch(e) { console.error('loadTaskSubs:', e); taskSubsCache[taskId] = []; }
+  return taskSubsCache[taskId];
+}
+
+async function loadMySubs() {
+  try {
+    const snap = await getDocs(query(collection(db,'taskSubs'), where('teacherId','==',currentUser.id)));
+    const list = snap.docs.map(d => ({_id:d.id, ...d.data()}));
+    taskSubsCache._mine = list;
+    return list;
+  } catch(e) { console.error('loadMySubs:', e); taskSubsCache._mine = []; return []; }
+}
+
+function mySubsFor(taskId) {
+  return (taskSubsCache._mine || []).filter(s => s.taskId === taskId);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 老師端
+// ══════════════════════════════════════════════════════════════
+window.renderTeacherTasks = async function() {
+  const el = document.getElementById('teacherTaskList');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">載入中...</div>';
+
+  await loadTasks();
+  await loadMySubs();
+
+  myTasks = allTasks.filter(t =>
+    t.status !== 'closed' &&
+    (!t.assignees || !t.assignees.length || t.assignees.includes(currentUser.id))
+  );
+
+  // 把自己已繳交任務的照片抓進快取，才能顯示縮圖
+  if (PHOTO_BACKEND === 'firestore') {
+    const taskIdsWithSubs = [...new Set((taskSubsCache._mine||[]).map(x => x.taskId))];
+    await Promise.all(taskIdsWithSubs.map(id => loadTaskPhotos(id)));
+  }
+
+  if (!myTasks.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">📸</div><div>目前沒有待辦的抽查任務</div></div>';
+    return;
+  }
+
+  el.innerHTML = myTasks.map(t => {
+    const subs   = mySubsFor(t._id);
+    const need   = t.minPhotos || 1;
+    const myClassIds = taskClassIdsFor(t, currentUser.id);   // null = 舊任務，不限班級
+    const myTargets  = myClassIds
+      ? myClassIds.map(id => ({ classId:id, name: (t.targets.find(x=>x.classId===id)?.className) || myClasses.find(c=>c._id===id)?.name || '（班級已刪除）' }))
+      : [];
+
+    // 每個指定班級是否已達張數
+    const perClassDone = myTargets.map(tg => ({
+      ...tg,
+      photos: subs.filter(s => s.classId === tg.classId).reduce((a,s)=>a+(s.photos?.length||0),0)
+    }));
+    const doneClasses = perClassDone.filter(x => x.photos >= need).length;
+
+    const photos = subs.reduce((a,s) => a + (s.photos?.length||0), 0);
+    const done   = myTargets.length ? doneClasses === myTargets.length : photos >= need;
+    const rejected = subs.some(s => s.status === 'rejected');
+    const over   = isOverdue(t);
+    const color  = rejected ? 'var(--red)' : done ? 'var(--teal)' : over ? 'var(--red)' : 'var(--yellow)';
+    const state  = rejected ? '❗ 需補件' : done ? '✅ 已繳交' : over ? '⏰ 已逾期' : '📥 待繳交';
+    return `
+    <div class="card" style="border-left:3px solid ${color}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:15px;font-weight:700;margin-bottom:4px">${esc(t.title)}</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6">
+            ${t.dueDate ? `截止：${t.dueDate}　` : ''}每班需 ${need} 張
+          </div>
+          ${myTargets.length ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px">
+            ${perClassDone.map(c => {
+              const ok = c.photos >= need;
+              return `<span style="display:inline-flex;align-items:center;gap:4px;background:${ok?'rgba(86,204,178,.15)':'rgba(255,255,255,.06)'};border:1px solid ${ok?'rgba(86,204,178,.35)':'var(--border)'};color:${ok?'var(--teal)':'var(--muted)'};border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700">
+                ${ok?'✅':'○'} ${esc(c.name)} ${c.photos}/${need}
+              </span>`;
+            }).join('')}
+          </div>` : ''}
+          ${t.desc ? `<div style="font-size:13px;color:var(--text);margin-top:8px;white-space:pre-wrap;opacity:.85">${esc(t.desc)}</div>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+          <span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55">${state}</span>
+          <button class="btn btn-teal btn-sm" onclick="openTaskUpload('${t._id}')">📷 上傳作業</button>
+        </div>
+      </div>
+      ${subs.length ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        ${subs.map(s => {
+          const st = SUB_STATUS[s.status] || SUB_STATUS.submitted;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;font-size:12px;flex-wrap:wrap">
+            <span style="color:var(--muted)">${esc(s.className||'—')}${s.studentName?' · '+esc(s.studentName):''}　${s.photos?.length||0} 張</span>
+            <span style="background:${st.bg};color:${st.color};border-radius:20px;padding:2px 10px;font-weight:700">${st.label}</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding-bottom:8px">
+            ${(s.photos||[]).map(p => {
+              const src = p.kind==='url' ? p.url : (taskPhotoCache[p.id]||'');
+              const key = p.kind==='url' ? p.url : p.id;
+              return src
+                ? `<img src="${src}" onclick="openPhotoView('${p.kind}','${esc(key)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:zoom-in">`
+                : '';
+            }).join('')}
+          </div>${s.reviewNote ? `<div style="font-size:12px;color:var(--red);padding-bottom:6px">主管備註：${esc(s.reviewNote)}</div>` : ''}`;
+        }).join('')}
+      </div>` : ''}
+    </div>`;
+  }).join('') + `<div id="taskUploadPanel" style="display:none"></div>`;
+};
+
+window.openTaskUpload = function(taskId) {
+  activeTaskId  = taskId;
+  pendingPhotos = [];
+  const t = allTasks.find(x => x._id === taskId);
+  if (!t) return;
+
+  // 只讓老師選這個任務指定給他的班級
+  const allowedIds = taskClassIdsFor(t, currentUser.id);
+  const selectable = allowedIds
+    ? myClasses.filter(c => allowedIds.includes(c._id))
+    : myClasses;
+  if (allowedIds && !selectable.length) {
+    showToast('這個任務指定的班級已不存在，請聯絡主管','error');
+    return;
+  }
+
+  const panel = document.getElementById('taskUploadPanel');
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <div class="card" style="border:1px solid var(--teal);background:rgba(86,204,178,.05)">
+      <div class="card-title">📷 上傳作業照片 — ${esc(t.title)}</div>
+      ${t.desc ? `<div style="font-size:13px;color:var(--muted);margin-bottom:14px;white-space:pre-wrap">${esc(t.desc)}</div>` : ''}
+
+      <label class="field-label">班級${allowedIds ? '（本次抽查指定）' : ''}</label>
+      <select class="select-input" id="taskClassSel" onchange="renderTaskStudentSel()" style="margin-bottom:12px">
+        <option value="">-- 請選擇班級 --</option>
+        ${selectable.map(c => `<option value="${c._id}">${esc(c.name)}</option>`).join('')}
+      </select>
+
+      <label class="field-label">學生（選填，可只上傳全班一組）</label>
+      <select class="select-input" id="taskStudentSel" style="margin-bottom:12px">
+        <option value="">-- 全班 / 不指定 --</option>
+      </select>
+
+      <label class="field-label">照片（可一次選多張，手機可直接拍照）</label>
+      <input type="file" id="taskPhotoInput" accept="image/*" capture="environment" multiple
+        onchange="onTaskPhotoPick(event)"
+        style="width:100%;background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:13px;margin-bottom:12px">
+
+      <div id="taskPhotoPreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+
+      <label class="field-label">備註（選填）</label>
+      <textarea class="field-input" id="taskNote" rows="2" placeholder="例：王小明未帶作業" style="margin-bottom:14px;resize:vertical"></textarea>
+
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-teal" style="flex:1;padding:12px" onclick="submitTaskPhotos()">☁️ 送出</button>
+        <button class="btn btn-ghost" style="padding:12px 20px" onclick="closeTaskUpload()">取消</button>
+      </div>
+    </div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'center'});
+};
+
+window.closeTaskUpload = function() {
+  activeTaskId = null; pendingPhotos = [];
+  const p = document.getElementById('taskUploadPanel');
+  if (p) { p.style.display = 'none'; p.innerHTML = ''; }
+};
+
+window.renderTaskStudentSel = function() {
+  const cid = document.getElementById('taskClassSel').value;
+  const cls = myClasses.find(c => c._id === cid);
+  const sel = document.getElementById('taskStudentSel');
+  sel.innerHTML = '<option value="">-- 全班 / 不指定 --</option>' +
+    (cls?.students || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+};
+
+window.onTaskPhotoPick = async function(ev) {
+  const files = [...(ev.target.files || [])];
+  if (!files.length) return;
+  showLoading('壓縮照片...');
+  for (const f of files) {
+    try {
+      const dataUrl = await compressImage(f);
+      pendingPhotos.push({ dataUrl, size: dataUrl.length });
+    } catch(e) { showToast('❌ '+e.message, 'error'); }
+  }
+  hideLoading();
+  ev.target.value = '';
+  renderPendingPhotos();
+};
+
+function renderPendingPhotos() {
+  const el = document.getElementById('taskPhotoPreview');
+  if (!el) return;
+  el.innerHTML = pendingPhotos.map((p,i) => `
+    <div style="position:relative">
+      <img src="${p.dataUrl}" style="width:84px;height:84px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">
+      <button onclick="removePendingPhoto(${i})"
+        style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:none;background:var(--red);color:#fff;font-size:12px;cursor:pointer;line-height:1">✕</button>
+    </div>`).join('') ||
+    '<div style="font-size:12px;color:var(--muted)">尚未選擇照片</div>';
+}
+window.removePendingPhoto = function(i) { pendingPhotos.splice(i,1); renderPendingPhotos(); };
+
+window.submitTaskPhotos = async function() {
+  const t = allTasks.find(x => x._id === activeTaskId);
+  if (!t) return;
+  const clsId = document.getElementById('taskClassSel').value;
+  const cls   = myClasses.find(c => c._id === clsId);
+  const stu   = document.getElementById('taskStudentSel').value;
+  const note  = document.getElementById('taskNote').value.trim();
+  if (!cls) { showToast('請選擇班級','error'); return; }
+  if (!pendingPhotos.length) { showToast('請至少上傳一張照片','error'); return; }
+
+  showLoading(`上傳中 0/${pendingPhotos.length}...`);
+  try {
+    const meta   = { taskId:t._id, teacherId:currentUser.id, classId:clsId };
+    const photos = [];
+    for (let i = 0; i < pendingPhotos.length; i++) {
+      document.getElementById('loadingText').textContent = `上傳中 ${i+1}/${pendingPhotos.length}...`;
+      photos.push(await uploadPhoto(pendingPhotos[i].dataUrl, meta));
+    }
+
+    // 同任務 + 同班級 + 同學生 → 累加到既有紀錄
+    const existing = mySubsFor(t._id).find(s => s.classId === clsId && (s.studentName||'') === stu);
+    if (existing?._id) {
+      await updateDoc(doc(db,'taskSubs',existing._id), {
+        photos: [...(existing.photos||[]), ...photos],
+        note, status:'submitted', reviewNote:'', updatedAt:Date.now()
+      });
+    } else {
+      await addDoc(collection(db,'taskSubs'), {
+        taskId:t._id, taskTitle:t.title,
+        teacherId:currentUser.id, teacherName:currentUser.name,
+        classId:clsId, className:cls.name,
+        studentName:stu, photos, note,
+        status:'submitted', reviewNote:'',
+        submittedAt:Date.now(), updatedAt:Date.now()
+      });
+    }
+    showToast(`☁️ 已上傳 ${photos.length} 張`);
+    closeTaskUpload();
+    await renderTeacherTasks();
+  } catch(e) { showToast('❌ 上傳失敗：'+e.message,'error'); console.error(e); }
+  hideLoading();
+};
+
+// ══════════════════════════════════════════════════════════════
+// Admin 端
+// ══════════════════════════════════════════════════════════════
+window.renderAdminTasks = async function() {
+  const el = document.getElementById('adminTaskList');
+  el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">載入中...</div>';
+
+  // 派遣表單需要班級清單（升班頁以外的地方不會自動載入）
+  if (!allClasses.length) {
+    try {
+      const snap = await getDocs(collection(db,'classes'));
+      allClasses = snap.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    } catch(e) { console.error('loadClasses(admin):', e); }
+  }
+  renderTaskAssigneePicker();
+  await loadTasks();
+
+  if (!allTasks.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">📸</div><div>尚未派遣任何任務</div></div>';
+    return;
+  }
+
+  // 一次撈完所有繳交紀錄，計算各任務進度
+  let subsAll = [];
+  try {
+    const snap = await getDocs(collection(db,'taskSubs'));
+    subsAll = snap.docs.map(d => ({_id:d.id, ...d.data()}));
+  } catch(e) { console.error(e); }
+  allTasks.forEach(t => { taskSubsCache[t._id] = subsAll.filter(s => s.taskId === t._id); });
+
+  el.innerHTML = allTasks.map(t => {
+    const target  = taskTargets(t);
+    const subs    = taskSubsCache[t._id] || [];
+    const doneSet = new Set(subs.map(s => s.classId ? s.classId : 'T:'+s.teacherId));
+    const doneN   = target.filter(x => doneSet.has(x.classId || ('T:'+x.teacherId))).length;
+    const pct     = target.length ? Math.round(doneN/target.length*100) : 0;
+    const over    = isOverdue(t);
+    const barCol  = pct === 100 ? 'var(--teal)' : over ? 'var(--red)' : 'var(--yellow)';
+    return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:15px;font-weight:700">
+            ${esc(t.title)}
+            ${t.status==='closed' ? '<span class="badge" style="background:rgba(255,255,255,.08);color:var(--muted);margin-left:6px">已結束</span>' : ''}
+            ${over ? '<span class="badge" style="background:rgba(255,107,107,.15);color:var(--red);margin-left:6px">逾期</span>' : ''}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px">
+            ${t.targets?.length
+              ? `${new Set(t.targets.map(x=>x.teacherId)).size} 位老師 · ${t.targets.length} 個班級`
+              : `派遣 ${target.length} 位老師`}　${t.dueDate?`截止 ${t.dueDate}　`:''}每班需 ${t.minPhotos||1} 張
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="toggleTaskDetail('${t._id}')">📂 檢視</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleTaskStatus('${t._id}')">${t.status==='closed'?'♻️ 重啟':'🔒 結束'}</button>
+          <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="deleteTask('${t._id}','${esc(t.title)}')">🗑</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1;height:8px;background:var(--surface3);border-radius:20px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${barCol};transition:width .3s"></div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:${barCol};min-width:78px;text-align:right">${doneN}/${target.length} 班已繳</div>
+      </div>
+      <div id="taskDetail_${t._id}" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)"></div>
+    </div>`;
+  }).join('');
+};
+
+function renderTaskAssigneePicker() {
+  const el = document.getElementById('taskAssigneePicker');
+  if (!el) return;
+  if (!teachers.length) {
+    el.innerHTML = '<div style="font-size:13px;color:var(--muted)">請先新增老師帳號</div>';
+    return;
+  }
+  const active = allClasses.filter(c => !c.archived);
+  if (!active.length) {
+    el.innerHTML = '<div style="font-size:13px;color:var(--muted)">尚無班級資料，請稍候或按上方「更新」</div>';
+    return;
+  }
+
+  // 依老師分組；找不到對應老師的班級歸到「未指定老師」
+  const html = teachers.map(t => {
+    // 主導的班級 + 有權限協作的班級都可以被指派
+    const mine = active.filter(c => hasClassAccess(c, t.userId));
+    if (!mine.length) return '';
+    return `
+    <div style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:700">${esc(t.name)}</span>
+        <button class="btn btn-ghost btn-sm" style="padding:2px 10px;font-size:11px"
+          onclick="toggleTeacherClasses('${esc(t.userId)}')">切換全部</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${mine.map(c => `
+        <label style="display:inline-flex;align-items:center;gap:6px;background:var(--surface3);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" class="taskAssignee" data-teacher="${esc(t.userId)}"
+            data-tname="${esc(t.name)}" data-cname="${esc(c.name)}" value="${c._id}" style="accent-color:var(--teal)">
+          ${esc(c.name)}${c.teacherId !== t.userId ? '<span style="opacity:.6;font-size:11px">（協作）</span>' : ''}
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+
+  const orphans = active.filter(c => !teachers.some(t => hasClassAccess(c, t.userId)));
+  el.innerHTML = html + (orphans.length ? `
+    <div style="margin-top:6px;padding-top:10px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">⚠️ 未對應到老師帳號的班級（無法派遣）</div>
+      <div style="font-size:12px;color:var(--muted)">${orphans.map(c=>esc(c.name)).join('、')}</div>
+    </div>` : '');
+}
+
+window.toggleTeacherClasses = function(userId) {
+  const boxes = [...document.querySelectorAll(`.taskAssignee[data-teacher="${userId}"]`)];
+  const allOn = boxes.every(b => b.checked);
+  boxes.forEach(b => b.checked = !allOn);
+};
+
+window.toggleAllAssignees = function(on) {
+  document.querySelectorAll('.taskAssignee').forEach(c => c.checked = on);
+};
+
+window.createTask = async function() {
+  const title = document.getElementById('newTaskTitle').value.trim();
+  const desc  = document.getElementById('newTaskDesc').value.trim();
+  const due   = document.getElementById('newTaskDue').value;
+  const minP  = parseInt(document.getElementById('newTaskMin').value) || 1;
+  const targets = [...document.querySelectorAll('.taskAssignee:checked')].map(c => ({
+    classId:   c.value,
+    className: c.dataset.cname || '',
+    teacherId: c.dataset.teacher || '',
+    teacherName: c.dataset.tname || ''
+  }));
+  if (!title) { showToast('請填寫任務名稱','error'); return; }
+  if (!targets.length) { showToast('請至少選擇一個班級','error'); return; }
+
+  // assignees 保留為老師清單（去重），供 LINE 通知腳本與舊資料相容使用
+  const assignees = [...new Set(targets.map(t => t.teacherId))];
+
+  showLoading('建立任務...');
+  try {
+    await addDoc(collection(db,'tasks'), {
+      title, desc, dueDate:due||'', minPhotos:minP,
+      targets, assignees, status:'open',
+      createdBy:'admin', createdAt:Date.now()
+    });
+    showToast(`✅ 已派遣：${title}`);
+    ['newTaskTitle','newTaskDesc','newTaskDue'].forEach(id => document.getElementById(id).value='');
+    document.getElementById('newTaskMin').value = '1';
+    toggleAllAssignees(false);
+    await renderAdminTasks();
+  } catch(e) { showToast('❌ 建立失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.toggleTaskStatus = async function(taskId) {
+  const t = allTasks.find(x => x._id === taskId);
+  if (!t) return;
+  const next = t.status === 'closed' ? 'open' : 'closed';
+  showLoading('更新中...');
+  try {
+    await updateDoc(doc(db,'tasks',taskId), { status:next, updatedAt:Date.now() });
+    showToast(next==='closed' ? '🔒 任務已結束' : '♻️ 任務已重啟');
+    await renderAdminTasks();
+  } catch(e) { showToast('❌ 更新失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.deleteTask = async function(taskId, title) {
+  if (!confirm(`確定刪除任務「${title}」？\n所有繳交紀錄與照片將一併刪除，且無法還原。`)) return;
+  showLoading('刪除中...');
+  try {
+    const [subSnap, photoSnap] = await Promise.all([
+      getDocs(query(collection(db,'taskSubs'),   where('taskId','==',taskId))),
+      getDocs(query(collection(db,'taskPhotos'), where('taskId','==',taskId)))
+    ]);
+    await Promise.all([
+      ...subSnap.docs.map(d   => deleteDoc(doc(db,'taskSubs',d.id))),
+      ...photoSnap.docs.map(d => deleteDoc(doc(db,'taskPhotos',d.id)))
+    ]);
+    await deleteDoc(doc(db,'tasks',taskId));
+    showToast('🗑 任務已刪除');
+    await renderAdminTasks();
+  } catch(e) { showToast('❌ 刪除失敗：'+e.message,'error'); console.error(e); }
+  hideLoading();
+};
+
+window.toggleTaskDetail = async function(taskId) {
+  const box = document.getElementById('taskDetail_'+taskId);
+  if (!box) return;
+  if (box.style.display === 'block') { box.style.display='none'; adminOpenTaskId=null; return; }
+  adminOpenTaskId = taskId;
+  box.style.display = 'block';
+  box.innerHTML = '<div style="font-size:13px;color:var(--muted)">載入照片中...</div>';
+
+  const t = allTasks.find(x => x._id === taskId);
+  const subs = await loadTaskSubs(taskId);
+  if (PHOTO_BACKEND === 'firestore') await loadTaskPhotos(taskId);
+
+  const target  = taskTargets(t);
+  const doneSet = new Set(subs.map(s => s.classId ? s.classId : 'T:'+s.teacherId));
+  const missing = target.filter(x => !doneSet.has(x.classId || ('T:'+x.teacherId)))
+                        .map(x => x.className ? `${x.teacherName} · ${x.className}` : x.teacherName);
+
+  box.innerHTML = `
+    ${missing.length ? `
+    <div style="background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.2);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px">❌ 尚未繳交（${missing.length} 個班級）</div>
+      <div>${missing.map(n=>`<span style="display:inline-block;background:rgba(255,107,107,.2);color:var(--red);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700;margin:2px">${esc(n)}</span>`).join('')}</div>
+    </div>` : ''}
+    ${subs.length ? subs.map(s => {
+      const st = SUB_STATUS[s.status] || SUB_STATUS.submitted;
+      return `
+      <div style="background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <div style="font-size:14px;font-weight:700">${esc(s.teacherName)}　<span style="font-weight:400;font-size:12px;color:var(--muted)">${esc(s.className||'')}${s.studentName?' · '+esc(s.studentName):''}</span></div>
+          <span style="background:${st.bg};color:${st.color};border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700">${st.label}</span>
+        </div>
+        ${s.note ? `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">備註：${esc(s.note)}</div>` : ''}
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          ${(s.photos||[]).map(p => {
+            const src = p.kind==='url' ? p.url : (taskPhotoCache[p.id]||'');
+            const key = p.kind==='url' ? p.url : p.id;
+            return src
+              ? `<img src="${src}" onclick="openPhotoView('${p.kind}','${esc(key)}')" title="點擊放大" style="width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:zoom-in">`
+              : `<div style="width:96px;height:96px;border-radius:8px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)">載入失敗</div>`;
+          }).join('') || '<span style="font-size:12px;color:var(--muted)">無照片</span>'}
+        </div>
+        ${s.reviewNote ? `<div style="font-size:12px;color:var(--red);margin-bottom:8px">主管備註：${esc(s.reviewNote)}</div>` : ''}
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-teal btn-sm" onclick="reviewSub('${s._id}','approved')">✅ 通過</button>
+          <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="reviewSub('${s._id}','rejected')">❗ 要求補件</button>
+        </div>
+      </div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--muted)">尚無老師繳交</div>'}`;
+};
+
+// ── 照片燈箱 ──────────────────────────────────────────────────
+// 注意：Chrome 會阻擋直接開啟 data: URL 的分頁，所以放大一定要用
+// 同頁面的 overlay，不能用 window.open()。
+// ══════════════════════════════════════════════════════════════
+// 🏫 主管端班級管理（新增 / 編輯 / 指派老師）
+// ══════════════════════════════════════════════════════════════
+let adminEditClassId = null;
+
+window.openAdminClassModal = function(classId) {
+  adminEditClassId = classId || null;
+  const cls = classId ? allClasses.find(c => c._id === classId) : null;
+  let panel = document.getElementById('adminClassPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'adminClassPanel';
+    const anchor = document.getElementById('promoteClassList');
+    anchor.parentNode.insertBefore(panel, anchor);
+  }
+  panel.innerHTML = `
+    <div class="card" style="border:1px solid var(--teal);background:rgba(86,204,178,.06);margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="card-title" style="margin:0">${cls ? '✏️ 編輯班級' : '🏫 新增班級'}</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeAdminClassModal()">✕ 關閉</button>
+      </div>
+
+      <label class="field-label">班級名稱</label>
+      <input class="field-input" id="admClassName" value="${esc(cls?.name||'')}" placeholder="例：國三數學" style="margin-bottom:12px">
+
+      <label class="field-label">主要負責老師</label>
+      <select class="select-input" id="admClassTeacher" style="margin-bottom:12px">
+        ${teachers.map(t => `<option value="${esc(t.userId)}" ${cls?.teacherId===t.userId?'selected':''}>${esc(t.name)}</option>`).join('')}
+      </select>
+
+      <label class="field-label">學生名單（一行一位）</label>
+      <textarea class="field-input" id="admClassStudents" rows="8"
+        placeholder="王小明&#10;李小華&#10;張小美" style="margin-bottom:14px;resize:vertical;line-height:1.8">${esc((cls?.students||[]).join('\\n'))}</textarea>
+
+      <button class="btn btn-teal" style="width:100%;padding:12px" onclick="saveAdminClass()">
+        ${cls ? '💾 儲存變更' : '✅ 建立班級'}
+      </button>
+      ${cls ? '<div style="font-size:12px;color:var(--muted);margin-top:10px">更換主要負責老師不會搬動已填的日誌，歷史紀錄仍保留原本填寫者。</div>' : ''}
+    </div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'center'});
+};
+
+window.closeAdminClassModal = function() {
+  adminEditClassId = null;
+  const p = document.getElementById('adminClassPanel');
+  if (p) p.remove();
+};
+
+window.saveAdminClass = async function() {
+  const name      = document.getElementById('admClassName').value.trim();
+  const teacherId = document.getElementById('admClassTeacher').value;
+  const students  = document.getElementById('admClassStudents').value
+    .split('\n').map(x => x.trim()).filter(Boolean);
+  if (!name)      { showToast('請輸入班級名稱','error'); return; }
+  if (!teacherId) { showToast('請選擇負責老師','error'); return; }
+  if (!students.length) { showToast('請至少輸入一位學生','error'); return; }
+
+  showLoading('儲存中...');
+  try {
+    if (adminEditClassId) {
+      await updateDoc(doc(db,'classes',adminEditClassId), { name, teacherId, students, updatedAt:Date.now() });
+      showToast('💾 班級已更新');
+    } else {
+      await addDoc(collection(db,'classes'), {
+        teacherId, name, students, members:[], memberIds:[], createdAt:Date.now()
+      });
+      showToast('✅ 班級已建立，記得到上方設定周課表');
+    }
+    closeAdminClassModal();
+    const snap = await getDocs(collection(db,'classes'));
+    allClasses = snap.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    renderPromoteClassList();
+  } catch(e) { showToast('❌ 儲存失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+// ══════════════════════════════════════════════════════════════
+// ✏️ 修改老師姓名
+// ══════════════════════════════════════════════════════════════
+window.renameTeacher = async function(docId, userId, oldName) {
+  const name = prompt(`修改老師姓名（帳號 ${userId}）：`, oldName);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { showToast('姓名不能空白','error'); return; }
+  if (trimmed === oldName) return;
+
+  if (!confirm(`將「${oldName}」改名為「${trimmed}」？\n\n所有日誌、班級與任務紀錄上的姓名都會一併更新。`)) return;
+
+  showLoading('更新中...');
+  try {
+    await updateDoc(doc(db,'teachers',docId), { name:trimmed, updatedAt:Date.now() });
+
+    // 姓名在多處被反正規化儲存，需要同步更新，否則舊紀錄會顯示舊名字
+    const jobs = [];
+    allEntries.filter(e => e.teacherId === userId && e.teacherName !== trimmed)
+      .forEach(e => jobs.push(updateDoc(doc(db,'entries',e._id), { teacherName:trimmed })));
+
+    const clsSnap = await getDocs(collection(db,'classes'));
+    clsSnap.docs.forEach(d => {
+      const ms = d.data().members || [];
+      if (ms.some(m => m.teacherId === userId && m.teacherName !== trimmed)) {
+        jobs.push(updateDoc(doc(db,'classes',d.id), {
+          members: ms.map(m => m.teacherId === userId ? {...m, teacherName:trimmed} : m)
+        }));
+      }
+    });
+
+    const taskSnap = await getDocs(collection(db,'tasks'));
+    taskSnap.docs.forEach(d => {
+      const tg = d.data().targets || [];
+      if (tg.some(x => x.teacherId === userId && x.teacherName !== trimmed)) {
+        jobs.push(updateDoc(doc(db,'tasks',d.id), {
+          targets: tg.map(x => x.teacherId === userId ? {...x, teacherName:trimmed} : x)
+        }));
+      }
+    });
+
+    const subSnap = await getDocs(query(collection(db,'taskSubs'), where('teacherId','==',userId)));
+    subSnap.docs.forEach(d => jobs.push(updateDoc(doc(db,'taskSubs',d.id), { teacherName:trimmed })));
+
+    const ctSnap = await getDocs(query(collection(db,'contacts'), where('teacherId','==',userId)));
+    ctSnap.docs.forEach(d => { if (d.data().teacherName !== trimmed) jobs.push(updateDoc(doc(db,'contacts',d.id), { teacherName:trimmed })); });
+
+    await Promise.all(jobs);
+    showToast(`✅ 已改名為 ${trimmed}（同步更新 ${jobs.length} 筆）`);
+    await adminLoadAll();
+    renderTeachers();
+  } catch(e) { showToast('❌ 改名失敗：'+e.message,'error'); console.error(e); }
+  hideLoading();
+};
+
+// ══════════════════════════════════════════════════════════════
+// 📤 課表匯出
+// ══════════════════════════════════════════════════════════════
+function downloadCSV(filename, rows) {
+  const csv = rows.map(r => r.map(v => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  }).join(',')).join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type:'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// 匯出用的課表來源：目前編輯中的那一份
+function exportSourceDays() {
+  return editingDays && Object.keys(editingDays).length
+    ? editingDays
+    : effectiveClassDays(scheduleSets.find(x => x._id === editingSetId));
+}
+function exportSetName() {
+  return scheduleSets.find(x => x._id === editingSetId)?.name || '課表';
+}
+
+window.renderExportPanel = function() {
+  const el = document.getElementById('exportPanel');
+  if (!el) return;
+  const students = [...new Set(allClasses.filter(c=>!c.archived).flatMap(c => c.students||[]))].sort();
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px">
+      <div>
+        <label class="field-label">老師課表</label>
+        <div style="display:flex;gap:6px">
+          <select class="select-input" id="expTeacher" style="margin:0;flex:1">
+            ${teachers.map(t=>`<option value="${esc(t.userId)}">${esc(t.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="exportSchedule('teacher')">匯出</button>
+        </div>
+      </div>
+      <div>
+        <label class="field-label">學生課表</label>
+        <div style="display:flex;gap:6px">
+          <select class="select-input" id="expStudent" style="margin:0;flex:1">
+            ${students.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('') || '<option value="">尚無學生</option>'}
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="exportSchedule('student')">匯出</button>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-purple" style="width:100%;padding:11px" onclick="exportSchedule('all')">📤 匯出全部課表（CSV）</button>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">
+      匯出的是目前編輯中的「${esc(exportSetName())}」。要匯出其他期間，先在上方切換課表。
+    </div>
+    <div id="exportPreview" style="margin-top:14px"></div>`;
+};
+
+window.exportSchedule = function(mode) {
+  const days     = exportSourceDays();
+  const setName  = exportSetName();
+  const active   = allClasses.filter(c => !c.archived);
+  const nameOfT  = id => teachers.find(t => t.userId === id)?.name || id;
+  const stamp    = todayISO();
+  let rows = [], title = '', preview = [];
+
+  const dayCells = cid => WEEKDAYS_LIST.map(d => (days[cid]||[]).includes(d) ? '●' : '');
+
+  if (mode === 'all') {
+    title = `${setName}｜全部班級`;
+    rows = [[`課表：${setName}`, `匯出日期：${stamp}`], [],
+            ['班級','主要負責老師','協作老師', ...WEEKDAYS_LIST.map(d=>'週'+d), '每週堂數']];
+    active.forEach(c => {
+      const co = (c.members||[]).map(m => m.teacherName).join('、');
+      const cells = dayCells(c._id);
+      rows.push([c.name, nameOfT(c.teacherId), co, ...cells, cells.filter(Boolean).length]);
+      preview.push({ label:c.name, sub:nameOfT(c.teacherId), cells });
+    });
+
+  } else if (mode === 'teacher') {
+    const tid = document.getElementById('expTeacher').value;
+    const tName = nameOfT(tid);
+    title = `${setName}｜${tName}`;
+    const mine = active.filter(c => hasClassAccess(c, tid));
+    rows = [[`課表：${setName}`, `老師：${tName}`, `匯出日期：${stamp}`], [],
+            ['班級','身分', ...WEEKDAYS_LIST.map(d=>'週'+d), '每週堂數']];
+    mine.forEach(c => {
+      const role = c.teacherId===tid ? '主要負責'
+        : ((c.members||[]).find(m=>m.teacherId===tid)?.type === 'sub' ? '職務代理' : '共同授課');
+      const cells = dayCells(c._id);
+      rows.push([c.name, role, ...cells, cells.filter(Boolean).length]);
+      preview.push({ label:c.name, sub:role, cells });
+    });
+    if (!mine.length) { showToast('這位老師沒有班級','error'); return; }
+
+  } else {
+    const stu = document.getElementById('expStudent').value;
+    if (!stu) { showToast('請選擇學生','error'); return; }
+    title = `${setName}｜${stu}`;
+    const mine = active.filter(c => (c.students||[]).includes(stu));
+    rows = [[`課表：${setName}`, `學生：${stu}`, `匯出日期：${stamp}`], [],
+            ['班級','授課老師', ...WEEKDAYS_LIST.map(d=>'週'+d), '每週堂數']];
+    mine.forEach(c => {
+      const who = [nameOfT(c.teacherId), ...(c.members||[]).map(m=>m.teacherName)].join('、');
+      const cells = dayCells(c._id);
+      rows.push([c.name, who, ...cells, cells.filter(Boolean).length]);
+      preview.push({ label:c.name, sub:who, cells });
+    });
+    if (!mine.length) { showToast(`${stu} 沒有在任何班級中`,'error'); return; }
+  }
+
+  // 每週合計
+  rows.push([]);
+  rows.push(['每日班級數','', ...(mode==='all'?['']:[]),
+    ...WEEKDAYS_LIST.map(d => preview.filter(p => p.cells[WEEKDAYS_LIST.indexOf(d)]).length)]);
+
+  downloadCSV(`${title.replace(/[｜\/\\]/g,'_')}_${stamp}.csv`, rows);
+
+  const box = document.getElementById('exportPreview');
+  if (box) box.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${esc(title)}　已下載 CSV</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr style="color:var(--muted)">
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">班級</th>
+          ${WEEKDAYS_LIST.map(d=>`<th style="padding:6px 4px;border-bottom:1px solid var(--border)">${d}</th>`).join('')}
+        </tr>
+        ${preview.map(p => `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
+            <span style="font-weight:700">${esc(p.label)}</span>
+            <span style="color:var(--muted);margin-left:6px">${esc(p.sub)}</span>
+          </td>
+          ${p.cells.map(v=>`<td style="text-align:center;padding:6px 4px;border-bottom:1px solid var(--border);color:${v?'var(--teal)':'var(--border)'}">${v||'·'}</td>`).join('')}
+        </tr>`).join('')}
+      </table>
+    </div>`;
+};
+
+// ══════════════════════════════════════════════════════════════
+// ⚠️ 清除資料（重建環境用）
+// ══════════════════════════════════════════════════════════════
+const RESET_TARGETS = {
+  entries:      { label:'所有日誌',       cols:['entries'] },
+  tasks:        { label:'抽查任務與照片', cols:['tasks','taskSubs','taskPhotos'] },
+  closures:     { label:'停課記錄',       cols:['closures'] },
+  schedule:     { label:'所有課表',       cols:['scheduleSets','scheduleConfig','schedule'] },
+  classes:      { label:'所有班級與學生', cols:['classes'] },
+  contacts:     { label:'所有電訪紀錄',   cols:['contacts'] }
+};
+
+// ══════════════════════════════════════════════════════════════
+// 📦 資料封存（封存並清空 / 檢視 / 還原 / 下載）
+// ══════════════════════════════════════════════════════════════
+// 封存不會刪掉資料，而是先複製到 archives / archiveChunks，
+// 再把原始 collection 清空。之後隨時可以檢視、下載或整批還原。
+//
+//   archives/{batchId}       封存批次的索引（名稱、時間、各項筆數）
+//   archiveChunks/{docId}    實際內容，JSON 字串分段存放
+//
+// Firestore 單筆文件上限 1MB，所以內容依大小切成多段。
+// ──────────────────────────────────────────────────────────────
+
+const ARCHIVE_CHUNK_LIMIT = 800 * 1024;   // 每段的安全上限
+let archives = [];
+
+async function loadArchives() {
+  try {
+    const snap = await getDocs(collection(db,'archives'));
+    archives = snap.docs.map(d => ({_id:d.id, ...d.data()}))
+      .sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+  } catch(e) { console.error('loadArchives:', e); archives = []; }
+}
+
+// 把一個 collection 的文件切成多段 JSON 字串
+function chunkifyDocs(docs) {
+  const chunks = [];
+  let cur = [], curSize = 0;
+  for (const d of docs) {
+    const item = { _id: d.id, ...d.data() };
+    const size = JSON.stringify(item).length;
+    if (curSize + size > ARCHIVE_CHUNK_LIMIT && cur.length) {
+      chunks.push(cur); cur = []; curSize = 0;
+    }
+    cur.push(item); curSize += size;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
+
+window.renderResetPanel = async function() {
+  const el = document.getElementById('resetPanel');
+  if (!el) return;
+  await loadArchives();
+
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      勾選的資料會先完整複製到封存區，再從系統中清空。之後隨時可以檢視、下載或還原。
+    </div>
+
+    <label class="field-label">封存名稱</label>
+    <input class="field-input" id="archiveName" placeholder="例：114學年上學期" value="${todayISO()} 封存" style="margin-bottom:12px">
+
+    <div style="margin-bottom:14px">
+      ${Object.entries(RESET_TARGETS).map(([k,v]) => `
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" class="resetTarget" value="${k}" style="accent-color:var(--yellow)">
+          <span>${v.label}</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted)">${v.cols.join(' / ')}</span>
+        </label>`).join('')}
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-purple" style="flex:1;min-width:180px;padding:11px" onclick="runArchive(true)">📦 封存並清空</button>
+      <button class="btn btn-ghost" style="padding:11px 16px" onclick="runArchive(false)">💾 只封存不清空</button>
+    </div>
+
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">📚 封存記錄（${archives.length}）</div>
+      ${archives.length ? archives.map(a => `
+        <div style="background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <div style="font-size:14px;font-weight:700">${esc(a.name)}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:3px">
+                ${new Date(a.createdAt).toLocaleString('zh-TW')}　共 ${a.totalDocs||0} 筆
+                ${a.cleared ? '' : '　·　未清空'}
+              </div>
+              <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">
+                ${Object.entries(a.counts||{}).filter(([,n])=>n>0).map(([col,n]) =>
+                  `<span style="font-size:11px;background:rgba(255,255,255,.07);border-radius:20px;padding:2px 9px;color:var(--muted)">${col} ${n}</span>`).join('')}
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" onclick="downloadArchive('${a._id}')">⬇️ 下載</button>
+              <button class="btn btn-ghost btn-sm" onclick="restoreArchive('${a._id}')">♻️ 還原</button>
+              <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="deleteArchive('${a._id}')">🗑</button>
+            </div>
+          </div>
+        </div>`).join('')
+      : '<div style="font-size:13px;color:var(--muted)">尚無封存記錄</div>'}
+    </div>`;
+};
+
+window.runArchive = async function(alsoClear) {
+  const keys = [...document.querySelectorAll('.resetTarget:checked')].map(c => c.value);
+  if (!keys.length) { showToast('請至少勾選一項','error'); return; }
+  const name = document.getElementById('archiveName').value.trim();
+  if (!name) { showToast('請填寫封存名稱','error'); return; }
+
+  const labels = keys.map(k => RESET_TARGETS[k].label);
+  if (alsoClear) {
+    const answer = prompt(
+      `即將封存並從系統清空：\n\n${labels.map(l=>'　· '+l).join('\n')}\n\n` +
+      `資料會完整保留在封存區，可以隨時還原。\n確定的話，請輸入「封存」兩個字：`);
+    if (answer !== '封存') { showToast('已取消'); return; }
+  } else if (!confirm(`封存以下項目（不清空）：\n\n${labels.map(l=>'　· '+l).join('\n')}`)) {
+    return;
+  }
+
+  const cols = [...new Set(keys.flatMap(k => RESET_TARGETS[k].cols))];
+  const batchId = 'ar_' + Date.now();
+  showLoading('封存中...');
+
+  try {
+    const counts = {};
+    let total = 0, seq = 0;
+
+    // ① 複製到封存區
+    for (const col of cols) {
+      const snap = await getDocs(collection(db, col));
+      counts[col] = snap.docs.length;
+      total += snap.docs.length;
+      if (!snap.docs.length) continue;
+
+      const chunks = chunkifyDocs(snap.docs);
+      for (const chunk of chunks) {
+        document.getElementById('loadingText').textContent = `封存 ${col}（${seq+1} 段）...`;
+        await setDoc(doc(db,'archiveChunks', `${batchId}_${String(seq).padStart(4,'0')}`), {
+          batchId, col, seq, count: chunk.length, data: JSON.stringify(chunk)
+        });
+        seq++;
+      }
+    }
+
+    await setDoc(doc(db,'archives', batchId), {
+      name, counts, totalDocs: total, chunkCount: seq,
+      cleared: !!alsoClear, createdAt: Date.now(), createdBy: 'admin'
+    });
+
+    // ② 清空原始資料（封存成功之後才做）
+    if (alsoClear) {
+      let done = 0;
+      for (const col of cols) {
+        const snap = await getDocs(collection(db, col));
+        for (let i = 0; i < snap.docs.length; i += 50) {
+          await Promise.all(snap.docs.slice(i, i+50).map(d => deleteDoc(doc(db, col, d.id))));
+          done += Math.min(50, snap.docs.length - i);
+          document.getElementById('loadingText').textContent = `清空中 ${done}/${total}...`;
+        }
+      }
+      showToast(`📦 已封存 ${total} 筆並清空`);
+      await adminLoadAll();
+      renderTeachers();
+    } else {
+      showToast(`💾 已封存 ${total} 筆（原資料保留）`);
+    }
+
+    await renderResetPanel();
+  } catch(e) {
+    showToast('❌ 封存失敗：'+e.message,'error');
+    console.error(e);
+  }
+  hideLoading();
+};
+
+// 讀出一個封存批次的完整內容 → { collectionName: [docs] }
+async function readArchive(batchId) {
+  const snap = await getDocs(query(collection(db,'archiveChunks'), where('batchId','==',batchId)));
+  const out = {};
+  snap.docs
+    .map(d => d.data())
+    .sort((a,b) => (a.seq||0)-(b.seq||0))
+    .forEach(c => {
+      if (!out[c.col]) out[c.col] = [];
+      try { out[c.col].push(...JSON.parse(c.data)); }
+      catch(e) { console.error('封存段落解析失敗', c.seq, e); }
+    });
+  return out;
+}
+
+window.downloadArchive = async function(batchId) {
+  const a = archives.find(x => x._id === batchId);
+  showLoading('讀取封存...');
+  try {
+    const data = await readArchive(batchId);
+    const payload = {
+      archiveName: a?.name || batchId,
+      createdAt: a?.createdAt,
+      exportedAt: Date.now(),
+      collections: data
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${(a?.name||batchId).replace(/[\/\\:*?"<>|]/g,'_')}.json`;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('⬇️ 已下載');
+  } catch(e) { showToast('❌ 下載失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.restoreArchive = async function(batchId) {
+  const a = archives.find(x => x._id === batchId);
+  if (!a) return;
+  const cols = Object.keys(a.counts||{}).filter(c => a.counts[c] > 0);
+  const answer = prompt(
+    `還原封存「${a.name}」\n\n` +
+    `將寫回：${cols.join('、')}\n共 ${a.totalDocs} 筆\n\n` +
+    `⚠️ 相同編號的現有資料會被覆蓋。\n` +
+    `確定的話，請輸入「還原」兩個字：`);
+  if (answer !== '還原') { showToast('已取消'); return; }
+
+  showLoading('還原中...');
+  try {
+    const data = await readArchive(batchId);
+    let done = 0;
+    for (const [col, items] of Object.entries(data)) {
+      for (let i = 0; i < items.length; i += 40) {
+        await Promise.all(items.slice(i, i+40).map(item => {
+          const { _id, ...fields } = item;
+          return setDoc(doc(db, col, _id), fields);
+        }));
+        done += Math.min(40, items.length - i);
+        document.getElementById('loadingText').textContent = `還原中 ${done}/${a.totalDocs}...`;
+      }
+    }
+    await updateDoc(doc(db,'archives',batchId), { cleared:false, restoredAt:Date.now() });
+    showToast(`♻️ 已還原 ${done} 筆`);
+    await adminLoadAll();
+    renderTeachers();
+    await renderResetPanel();
+  } catch(e) { showToast('❌ 還原失敗：'+e.message,'error'); console.error(e); }
+  hideLoading();
+};
+
+window.deleteArchive = async function(batchId) {
+  const a = archives.find(x => x._id === batchId);
+  if (!a) return;
+  const answer = prompt(
+    `永久刪除封存「${a.name}」（${a.totalDocs} 筆）？\n\n` +
+    `這次是真的刪除，無法還原。建議先按「下載」留一份 JSON。\n` +
+    `確定的話，請輸入「永久刪除」：`);
+  if (answer !== '永久刪除') { showToast('已取消'); return; }
+
+  showLoading('刪除中...');
+  try {
+    const snap = await getDocs(query(collection(db,'archiveChunks'), where('batchId','==',batchId)));
+    for (let i = 0; i < snap.docs.length; i += 50) {
+      await Promise.all(snap.docs.slice(i, i+50).map(d => deleteDoc(doc(db,'archiveChunks',d.id))));
+    }
+    await deleteDoc(doc(db,'archives',batchId));
+    showToast('🗑 封存已刪除');
+    await renderResetPanel();
+  } catch(e) { showToast('❌ 刪除失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+// ══════════════════════════════════════════════════════════════
+// 🚫 停課登記 (CLASS CLOSURES)
+// ══════════════════════════════════════════════════════════════
+// closures 文件格式：
+//   date/dateEnd  適用日期（單日時 dateEnd 留空）
+//   scope         'all' 全校 | 'class' 指定班級
+//   classIds[]    scope==='class' 時的班級清單
+//   reason        停課原因
+//   status        'pending' 待確認 | 'approved' 已確認 | 'rejected' 已駁回
+//   主管登記 → 直接 approved；老師登記 → pending，需主管確認
+//
+// pending 也會暫時跳過提醒（否則當晚就會被 LINE 誤催），
+// 但橫幅與 LINE 通知會標成「待確認」，主管才知道要去審。
+// ──────────────────────────────────────────────────────────────
+
+let closures = [];
+
+const CLOSURE_STATUS = {
+  pending:  { label:'待確認', color:'var(--yellow)' },
+  approved: { label:'已確認', color:'var(--teal)'   },
+  rejected: { label:'已駁回', color:'var(--red)'    }
+};
+
+async function loadClosures(force) {
+  if (!force && !currentUser?.isAdmin && cacheFresh('closures')) return;
+  try {
+    const snap = await getDocs(collection(db,'closures'));
+    closures = snap.docs.map(d => ({_id:d.id, ...d.data()}))
+      .sort((a,b) => (b.date||'').localeCompare(a.date||''));
+    cacheMark('closures');
+  } catch(e) { console.error('loadClosures:', e); closures = []; }
+}
+
+// 這個班級在這天是否停課；回傳該筆停課記錄或 null
+function closureFor(classId, iso) {
+  return closures.find(c =>
+    c.status !== 'rejected' &&
+    c.date && c.date <= iso && iso <= (c.dateEnd || c.date) &&
+    (c.scope === 'all' || (c.classIds||[]).includes(classId))
+  ) || null;
+}
+
+function closureRangeText(c) {
+  return c.dateEnd && c.dateEnd !== c.date ? `${c.date} ～ ${c.dateEnd}` : c.date;
+}
+function closureScopeText(c) {
+  if (c.scope === 'all') return '全校停課';
+  const names = (c.classIds||[]).map(id =>
+    (typeof allClasses !== 'undefined' ? allClasses : []).find(x => x._id===id)?.name ||
+    (typeof myClasses  !== 'undefined' ? myClasses  : []).find(x => x._id===id)?.name || id);
+  return names.join('、') || '（班級已刪除）';
+}
+
+// ══════════════════════════════════════════════════════════════
+// 老師端：登記停課（送出後為待確認）
+// ══════════════════════════════════════════════════════════════
+window.openTeacherClosure = function() {
+  const panel = document.getElementById('teacherClosurePanel');
+  if (panel.style.display === 'block') { closeTeacherClosure(); return; }
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <div class="card" style="border:1px solid var(--yellow);background:rgba(255,209,102,.06)">
+      <div class="card-title">🚫 登記停課</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        送出後狀態為「待確認」，主管確認前系統不會催你填這天的日誌。
+      </div>
+
+      <label class="field-label">日期</label>
+      <input type="date" class="field-input" id="closureDate" value="${todayISO()}" style="margin-bottom:12px">
+
+      <label class="field-label">班級</label>
+      <select class="select-input" id="closureClass" style="margin-bottom:12px">
+        ${myClasses.map(c => `<option value="${c._id}">${esc(c.name)}</option>`).join('')}
+      </select>
+
+      <label class="field-label">停課原因</label>
+      <input class="field-input" id="closureReason" placeholder="例：颱風停課 / 段考週 / 教室整修" style="margin-bottom:14px">
+
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-teal" style="flex:1;padding:12px" onclick="submitTeacherClosure()">送出</button>
+        <button class="btn btn-ghost" style="padding:12px 20px" onclick="closeTeacherClosure()">取消</button>
+      </div>
+
+      <div id="myClosureList" style="margin-top:16px"></div>
+    </div>`;
+  renderMyClosures();
+};
+
+window.closeTeacherClosure = function() {
+  const p = document.getElementById('teacherClosurePanel');
+  if (p) { p.style.display='none'; p.innerHTML=''; }
+};
+
+async function renderMyClosures() {
+  await loadClosures(true);
+  const el = document.getElementById('myClosureList');
+  if (!el) return;
+  const myIds = myClasses.map(c => c._id);
+  const mine = closures.filter(c =>
+    c.createdBy === currentUser.id || (c.classIds||[]).some(id => myIds.includes(id)) || c.scope==='all');
+  if (!mine.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;padding-top:14px;border-top:1px solid var(--border)">近期停課記錄</div>
+    ${mine.slice(0,8).map(c => {
+      const st = CLOSURE_STATUS[c.status] || CLOSURE_STATUS.pending;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;font-size:12px;flex-wrap:wrap">
+        <span style="color:var(--muted)">${closureRangeText(c)}　${esc(closureScopeText(c))}${c.reason?'　'+esc(c.reason):''}</span>
+        <span style="background:${st.color}22;color:${st.color};border-radius:20px;padding:2px 10px;font-weight:700">${st.label}</span>
+      </div>${c.reviewNote?`<div style="font-size:11px;color:var(--red);padding-bottom:6px">主管：${esc(c.reviewNote)}</div>`:''}`;
+    }).join('')}`;
+}
+
+window.submitTeacherClosure = async function() {
+  const date    = document.getElementById('closureDate').value;
+  const classId = document.getElementById('closureClass').value;
+  const reason  = document.getElementById('closureReason').value.trim();
+  if (!date)    { showToast('請選擇日期','error'); return; }
+  if (!classId) { showToast('請選擇班級','error'); return; }
+  if (!reason)  { showToast('請填寫停課原因','error'); return; }
+
+  showLoading('送出中...');
+  try {
+    await addDoc(collection(db,'closures'), {
+      date, dateEnd:'', scope:'class', classIds:[classId], reason,
+      status:'pending', createdRole:'teacher',
+      createdBy:currentUser.id, createdByName:currentUser.name,
+      createdAt:Date.now()
+    });
+    showToast('📮 已送出，等待主管確認');
+    document.getElementById('closureReason').value = '';
+    await renderMyClosures();
+  } catch(e) { showToast('❌ 送出失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+// ══════════════════════════════════════════════════════════════
+// 主管端：登記與審核
+// ══════════════════════════════════════════════════════════════
+window.renderClosureAdmin = async function() {
+  const el = document.getElementById('closureAdmin');
+  if (!el) return;
+  await loadClosures();
+
+  const pending  = closures.filter(c => c.status === 'pending');
+  const others   = closures.filter(c => c.status !== 'pending');
+  const active   = allClasses.filter(c => !c.archived);
+
+  el.innerHTML = `
+    ${pending.length ? `
+    <div style="background:rgba(255,209,102,.08);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--yellow);margin-bottom:10px">⏳ 待確認的停課申請（${pending.length}）</div>
+      ${pending.map(c => `
+        <div style="background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:11px;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:3px">${closureRangeText(c)}　${esc(closureScopeText(c))}</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:9px">${esc(c.reason||'')}　·　${esc(c.createdByName||'')} 申請</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-teal btn-sm" onclick="reviewClosure('${c._id}','approved')">✅ 確認</button>
+            <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="reviewClosure('${c._id}','rejected')">❌ 駁回</button>
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div style="background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px">➕ 新增停課</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div><label class="field-label">起日</label><input type="date" class="field-input" id="admClosureFrom" value="${todayISO()}" style="margin:0"></div>
+        <div><label class="field-label">迄日（單日可留空）</label><input type="date" class="field-input" id="admClosureTo" style="margin:0"></div>
+      </div>
+      <label class="field-label">範圍</label>
+      <select class="select-input" id="admClosureScope" onchange="toggleClosureClasses()" style="margin-bottom:10px">
+        <option value="all">🏫 全校停課</option>
+        <option value="class">🎯 指定班級</option>
+      </select>
+      <div id="admClosureClasses" style="display:none;margin-bottom:10px;max-height:180px;overflow-y:auto">
+        ${active.map(c => `<label style="display:inline-flex;align-items:center;gap:6px;background:var(--surface3);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:13px;cursor:pointer;margin:3px">
+          <input type="checkbox" class="admClosureCls" value="${c._id}" style="accent-color:var(--teal)">${esc(c.name)}
+        </label>`).join('') || '<div style="font-size:12px;color:var(--muted)">尚無班級</div>'}
+      </div>
+      <label class="field-label">停課原因</label>
+      <input class="field-input" id="admClosureReason" placeholder="例：國定假日 / 颱風停課 / 段考週" style="margin-bottom:12px">
+      <button class="btn btn-purple" style="width:100%;padding:11px" onclick="createClosure()">🚫 登記停課</button>
+    </div>
+
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">停課記錄</div>
+    ${others.length ? others.slice(0,30).map(c => {
+      const st = CLOSURE_STATUS[c.status] || CLOSURE_STATUS.approved;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap">
+        <div style="flex:1;min-width:180px">
+          <div style="font-size:13px;font-weight:700">${closureRangeText(c)}　${esc(closureScopeText(c))}</div>
+          <div style="font-size:12px;color:var(--muted)">${esc(c.reason||'')}${c.createdByName?`　·　${esc(c.createdByName)}`:''}</div>
+        </div>
+        <span style="background:${st.color}22;color:${st.color};border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700">${st.label}</span>
+        <button class="btn btn-sm" style="background:rgba(255,107,107,.15);color:var(--red)" onclick="deleteClosure('${c._id}')">🗑</button>
+      </div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--muted)">尚無停課記錄</div>'}`;
+};
+
+window.toggleClosureClasses = function() {
+  const on = document.getElementById('admClosureScope').value === 'class';
+  document.getElementById('admClosureClasses').style.display = on ? 'block' : 'none';
+};
+
+window.createClosure = async function() {
+  const from   = document.getElementById('admClosureFrom').value;
+  const to     = document.getElementById('admClosureTo').value;
+  const scope  = document.getElementById('admClosureScope').value;
+  const reason = document.getElementById('admClosureReason').value.trim();
+  const classIds = [...document.querySelectorAll('.admClosureCls:checked')].map(c => c.value);
+  if (!from) { showToast('請選擇起日','error'); return; }
+  if (to && to < from) { showToast('迄日不能早於起日','error'); return; }
+  if (scope === 'class' && !classIds.length) { showToast('請至少選擇一個班級','error'); return; }
+  if (!reason) { showToast('請填寫停課原因','error'); return; }
+
+  showLoading('登記中...');
+  try {
+    await addDoc(collection(db,'closures'), {
+      date:from, dateEnd:to||'', scope, classIds:scope==='class'?classIds:[], reason,
+      status:'approved', createdRole:'admin',
+      createdBy:'admin', createdByName:'主管',
+      createdAt:Date.now()
+    });
+    showToast('🚫 已登記停課');
+    document.getElementById('admClosureReason').value = '';
+    document.querySelectorAll('.admClosureCls').forEach(c => c.checked = false);
+    await renderClosureAdmin();
+    renderScheduleStatusBanner();
+  } catch(e) { showToast('❌ 登記失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.reviewClosure = async function(id, status) {
+  let note = '';
+  if (status === 'rejected') {
+    note = prompt('駁回原因（老師會看到）：') || '';
+    if (!note) return;
+  }
+  showLoading('更新中...');
+  try {
+    await updateDoc(doc(db,'closures',id), {
+      status, reviewNote:note, reviewedBy:'admin', reviewedAt:Date.now()
+    });
+    showToast(status==='approved' ? '✅ 已確認停課' : '❌ 已駁回');
+    await renderClosureAdmin();
+    renderScheduleStatusBanner();
+  } catch(e) { showToast('❌ 更新失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.deleteClosure = async function(id) {
+  if (!confirm('確定刪除這筆停課記錄？刪除後該日會恢復成應填日誌。')) return;
+  showLoading('刪除中...');
+  try {
+    await deleteDoc(doc(db,'closures',id));
+    showToast('🗑 已刪除');
+    await renderClosureAdmin();
+    renderScheduleStatusBanner();
+  } catch(e) { showToast('❌ 刪除失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+window.openPhotoView = function(kind, key) {
+  const src = kind === 'url' ? key : (taskPhotoCache[key] || '');
+  if (!src) { showToast('照片尚未載入完成，請稍候再試', 'error'); return; }
+
+  let ov = document.getElementById('photoLightbox');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'photoLightbox';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99999;'
+      + 'display:none;align-items:center;justify-content:center;padding:24px;cursor:zoom-out;';
+    ov.addEventListener('click', ev => { if (ev.target === ov) closePhotoView(); });
+    document.body.appendChild(ov);
+  }
+
+  ov.innerHTML = `
+    <img src="${src}" style="max-width:100%;max-height:84vh;object-fit:contain;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.6);cursor:default">
+    <button onclick="closePhotoView()" aria-label="關閉"
+      style="position:absolute;top:18px;right:22px;width:40px;height:40px;border-radius:50%;border:none;background:rgba(255,255,255,.15);color:#fff;font-size:20px;cursor:pointer;line-height:1;">✕</button>
+    <a href="${src}" download="作業抽查.jpg"
+      style="position:absolute;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.15);color:#fff;text-decoration:none;border-radius:20px;padding:9px 22px;font-size:13px;font-weight:700;">⬇️ 下載原圖</a>`;
+  ov.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+};
+
+window.closePhotoView = function() {
+  const ov = document.getElementById('photoLightbox');
+  if (ov) { ov.style.display = 'none'; ov.innerHTML = ''; }
+  document.body.style.overflow = '';
+};
+
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') closePhotoView();
+});
+
+window.reviewSub = async function(subId, status) {
+  let note = '';
+  if (status === 'rejected') {
+    note = prompt('請說明需要補件的原因：') || '';
+    if (!note) return;
+  }
+  showLoading('更新中...');
+  try {
+    await updateDoc(doc(db,'taskSubs',subId), { status, reviewNote:note, reviewedAt:Date.now() });
+    showToast(status==='approved' ? '✅ 已通過' : '❗ 已要求補件');
+    if (adminOpenTaskId) {
+      const box = document.getElementById('taskDetail_'+adminOpenTaskId);
+      if (box) { box.style.display='none'; await toggleTaskDetail(adminOpenTaskId); }
+    }
+  } catch(e) { showToast('❌ 更新失敗：'+e.message,'error'); }
+  hideLoading();
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// 🔁 舊系統搬遷（bhcs-journal → bhcs-system）
+// ══════════════════════════════════════════════════════════════
+// 舊專案的規則是全開的，可以直接讀；只有主管能執行（新專案的寫入受規則保護）。
+const LEGACY_CONFIG = {
+  apiKey: "AIzaSyBMMEKGuMYdOCglS8_gIx0HpB4u9ClE28s",
+  authDomain: "bhcs-journal.firebaseapp.com",
+  projectId: "bhcs-journal",
+  storageBucket: "bhcs-journal.firebasestorage.app",
+  messagingSenderId: "879408543982",
+  appId: "1:879408543982:web:833a6ece945e8445125bff"
+};
+const MIGRATE_COLS = ['classes','entries','scheduleSets','scheduleConfig','schedule','closures','tasks','taskSubs','taskPhotos','archives','archiveChunks'];
+
+function legacyDb() {
+  const name = 'legacy';
+  const a = getApps().some(x => x.name === name) ? getApp(name) : initializeApp(LEGACY_CONFIG, name);
+  return getFirestore(a);
+}
+function migLog(msg) {
+  const el = document.getElementById('migLog'); if (!el) return;
+  el.style.display = 'block';
+  el.textContent += msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+window.runMigration = async function() {
+  const pass       = document.getElementById('migInitPass').value;
+  const doTeachers = document.getElementById('migTeachers').checked;
+  const doData     = document.getElementById('migData').checked;
+  if (!doTeachers && !doData) { showToast('請至少勾選一項','error'); return; }
+  if (doTeachers && pass.length < PASS_MIN) { showToast(`老師初始密碼至少 ${PASS_MIN} 碼`,'error'); return; }
+  if (!confirm('確定從舊系統（bhcs-journal）搬遷資料到這個專案？\n相同 ID 的文件會被覆蓋，老師帳號已存在者會跳過。')) return;
+  document.getElementById('migLog').textContent = '';
+  showLoading('搬遷中...');
+  try {
+    const ldb = legacyDb();
+    if (doTeachers) {
+      const snap = await getDocs(collection(ldb,'teachers'));
+      let made = 0, skipped = 0;
+      for (const d of snap.docs) {
+        const t = d.data();
+        const userId = String(t.userId||'').trim().toLowerCase();
+        if (!userId || userId === ADMIN_USER) continue;
+        const ex = await getDoc(doc(db,'logins',userId));
+        if (ex.exists()) { skipped++; migLog(`跳過（已存在）：${t.name} ${userId}`); continue; }
+        await provisionTeacher(userId, t.name || userId, pass);
+        made++; migLog(`✅ 老師帳號：${t.name}（${userId}）`);
+      }
+      migLog(`老師帳號：新建 ${made}、跳過 ${skipped}`);
+    }
+    if (doData) {
+      for (const col of MIGRATE_COLS) {
+        document.getElementById('loadingText').textContent = `搬遷 ${col}...`;
+        const snap = await getDocs(collection(ldb,col));
+        let n = 0;
+        for (const d of snap.docs) {
+          await setDoc(doc(db,col,d.id), d.data());
+          n++;
+          if (n % 50 === 0) { migLog(`  ${col} ${n}/${snap.size}`); document.getElementById('loadingText').textContent = `搬遷 ${col} ${n}/${snap.size}`; }
+        }
+        migLog(`✅ ${col}：${n} 筆`);
+      }
+    }
+    migLog('🎉 搬遷完成');
+    showToast('🎉 搬遷完成');
+    await adminLoadAll(); renderTeachers();
+  } catch(e) {
+    migLog('❌ ' + (e.message || e));
+    showToast('❌ 搬遷失敗：' + authErrMsg(e), 'error');
+    console.error(e);
+  }
+  hideLoading();
+};
+
+
+// ── 供 js/contacts.js 使用 ──
+export { authErrMsg, cacheFresh, cacheMark, currentUser, db, downloadCSV, esc, hideLoading, showLoading, showToast, teachers, todayISO };

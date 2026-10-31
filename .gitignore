@@ -1,0 +1,4 @@
+# 含個資的測試資料，不進 repo
+test/fixtures/*.pdf
+node_modules/
+package-lock.json

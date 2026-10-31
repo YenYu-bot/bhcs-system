@@ -1,6 +1,8 @@
 # 百宏文教 · 教室日誌與電訪表（bhcs-system）
 
-單一 `index.html`、零建置工具。Firebase 專案 `bhcs-system`，使用 Firestore + Authentication（電子郵件/密碼）。
+靜態站、零建置工具：`index.html`（版面）＋ `css/app.css` ＋ `js/app.js`（核心與教室日誌）＋ `js/contacts.js`（電訪表，從 app.js import 共用物件）。Firebase 專案 `bhcs-system`，使用 Firestore + Authentication（電子郵件/密碼）。
+
+**改了 css/ 或 js/ 之後**執行 `python3 tools/bump-version.py`（或 `npm run bump`）更新 `index.html` 的 `?v=` 版本號，否則瀏覽器可能用舊快取。
 前身為 `bhcs-journal`（無 Auth、規則全開），本專案把帳號改為 Firebase Auth，並新增電訪表。
 
 ## 首次部署
@@ -44,3 +46,22 @@
 - 主管端 `contacts` 預設只載入最近 3 期（`CT_ADMIN_PERIODS`），選更早的月份或按「全部」才補撈；旗標紀錄一律載入。老師端資料有 60 秒快取，右上 🔄 可強制重撈。
 - LINE 推播失敗通知：`dailyCheck` 出錯會推錯誤到 LINE 並寄 Email（指令碼屬性 `ALERT_EMAIL`，沒設就寄給執行者）；`healthCheck` 每晚 23:30 檢查當天是否成功，沒成功就提醒。`installTrigger` 會同時裝兩個觸發器。
 - 電訪週期：每月 11 日起算、次月 10 日截止（「10 月份」= 10/11～11/10，「12 月份」= 12/11～隔年 1/10）。網站與 `gas/Code.gs` 共用常數 `CT_CYCLE_START_DAY = 11`，要改兩邊一起改。LINE 每晚推播當期進度，週一、四與截止前 5 天列出未填學生姓名。
+
+## 測試
+
+Playwright 無頭瀏覽器 + Firebase 假件（`test/mocks/`），不會碰真的 Firebase。
+
+```bash
+npm i -D playwright && npx playwright install chromium   # 第一次
+npm test                                                  # 全部：node test/run-all.js
+node test/contacts-admin.test.js                          # 單一檔
+```
+
+- `auth`：主管建立、老師新增／重設／刪除、改密碼提醒、備援主管、忘記密碼
+- `journal`：班級、填日誌、歷史、停課申請、主管所有日誌
+- `contacts-teacher` / `contacts-admin`：電訪表老師端與主管端全部流程
+- `period`：電訪週期與跨年
+- `migration`：舊系統搬遷
+- `pdf-import`：真實點名表 PDF，需要把 PDF 放到 `test/fixtures/roster.pdf`（含個資，已 gitignore）；沒有會自動略過。連不到 CDN 的環境可設 `PDFJS_DIR=<pdfjs-dist/build>` 用本機 pdf.js。
+
+**Firestore 規則沒有自動測試**（需要 Firebase 模擬器）。改規則後請用老師帳號實測：填日誌、改歷史、班級增改刪、停課申請、抽查上傳、電訪新增／編輯、新增學生。舊規則在 `firestore.rules.prev`。
