@@ -29,6 +29,8 @@ var WEEKDAYS   = ['一','二','三','四','五','六','日'];   // index 0 = 週
 var CT_CYCLE_START_DAY  = 11;
 var CT_DETAIL_WEEKDAYS  = ['一','四'];
 var CT_DETAIL_LAST_DAYS = 5;
+// 「未接通」算不算完成一次電訪（與網站 CT_COUNT_NOANSWER 一致）
+var CT_COUNT_NOANSWER   = false;
 
 function pad2_(n) { return (n < 10 ? '0' : '') + n; }
 /** 指定日期落在哪一期：{ label:'10月份', from:'2026-10-11', to:'2026-11-10' } */
@@ -85,7 +87,8 @@ function fsList_(collectionName) {
 /** structured query：單一欄位條件（op: EQUAL / GREATER_THAN_OR_EQUAL …）或多條件 AND */
 function fsQuery_(collectionId, filters, limit) {
   var fieldFilters = filters.map(function (f) {
-    return { fieldFilter: { field: { fieldPath: f.field }, op: f.op, value: { stringValue: f.value } } };
+    var v = typeof f.value === 'boolean' ? { booleanValue: f.value } : { stringValue: f.value };
+    return { fieldFilter: { field: { fieldPath: f.field }, op: f.op, value: v } };
   });
   var where = fieldFilters.length === 1 ? fieldFilters[0]
             : { compositeFilter: { op: 'AND', filters: fieldFilters } };
@@ -269,7 +272,10 @@ function contactSummary_(iso, weekday, nameOf) {
 
   var contacts = fsContactsBetween_(from, iso);
   var done = {};
-  contacts.forEach(function (c) { done[c.teacherId + '|' + c.studentId] = true; });
+  contacts.forEach(function (c) {
+    if (!CT_COUNT_NOANSWER && c.method === 'noanswer') return;
+    done[c.teacherId + '|' + c.studentId] = true;
+  });
 
   var byT = {};
   students.forEach(function (s) {
@@ -302,6 +308,24 @@ function contactSummary_(iso, weekday, nameOf) {
     if (detail) out.push('　　' + b.missing.join('、'));
   });
   if (!detail) out.push('　（週' + CT_DETAIL_WEEKDAYS.join('、') + '與截止前 ' + CT_DETAIL_LAST_DAYS + ' 天會列出未填學生）');
+
+  // 需主管關注且尚未處理的紀錄（不限期間）
+  try {
+    var flagged = fsQuery_('contacts', [{ field: 'flag', op: 'EQUAL', value: true }], 200)
+      .filter(function (c) { return !c.flagResolvedAt; })
+      .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+    if (flagged.length) {
+      var nameOfS = {};
+      students.forEach(function (s) { nameOfS[s._id] = s.name; });
+      out.push('');
+      out.push('🚩 需主管關注（未處理 ' + flagged.length + ' 筆）');
+      flagged.slice(0, 10).forEach(function (c) {
+        out.push('　' + c.date + ' ' + (nameOfS[c.studentId] || c.studentName || '') + '（' + (nameOf[c.teacherId] || c.teacherName || '') + '）' +
+                 (c.content ? '：' + String(c.content).replace(/\s+/g, ' ').slice(0, 40) : ''));
+      });
+      if (flagged.length > 10) out.push('　…另有 ' + (flagged.length - 10) + ' 筆，請到網站「紀錄」頁查看');
+    }
+  } catch (e) { Logger.log('旗標查詢略過：' + e.message); }
   return out.join('\n');
 }
 

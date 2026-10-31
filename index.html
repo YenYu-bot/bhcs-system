@@ -320,6 +320,10 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
           <input class="field-input" id="ctSearch" placeholder="搜尋學生姓名或班別" oninput="ctRenderTeacherList()" style="flex:1">
           <button class="btn btn-teal btn-sm" style="white-space:nowrap" onclick="ctOpenStudentModal()">＋ 新增學生</button>
         </div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn btn-sm btn-purple" id="ctFilterAll" onclick="ctSetTeacherFilter('all')">全部</button>
+          <button class="btn btn-sm btn-ghost" id="ctFilterMissing" onclick="ctSetTeacherFilter('missing')">只看未填</button>
+        </div>
       </div>
       <div id="ctTeacherList"></div>
       <div class="card" style="margin-top:16px">
@@ -4007,6 +4011,9 @@ window.renameTeacher = async function(docId, userId, oldName) {
     const subSnap = await getDocs(query(collection(db,'taskSubs'), where('teacherId','==',userId)));
     subSnap.docs.forEach(d => jobs.push(updateDoc(doc(db,'taskSubs',d.id), { teacherName:trimmed })));
 
+    const ctSnap = await getDocs(query(collection(db,'contacts'), where('teacherId','==',userId)));
+    ctSnap.docs.forEach(d => { if (d.data().teacherName !== trimmed) jobs.push(updateDoc(doc(db,'contacts',d.id), { teacherName:trimmed })); });
+
     await Promise.all(jobs);
     showToast(`✅ 已改名為 ${trimmed}（同步更新 ${jobs.length} 筆）`);
     await adminLoadAll();
@@ -4827,6 +4834,15 @@ let ctImportPages   = [];   // 匯入預覽 [{className, teacherName, teacherId,
 let _pdfjs          = null;
 
 const CT_METHODS = { phone:'電話', line:'LINE', inperson:'面談', noanswer:'未接通' };
+// 「未接通」算不算完成一次電訪？false = 不算（仍會顯示嘗試次數）。※ GAS 推播腳本有同一個常數，兩邊要一致。
+const CT_COUNT_NOANSWER = false;
+function ctCounts(c) { return CT_COUNT_NOANSWER || c.method !== 'noanswer'; }
+// 期間內是否完成（至少一筆算數的紀錄）；嘗試次數（含未接通）
+function ctDoneIn(list, from, to) { return list.some(c => c.date >= from && c.date <= to && ctCounts(c)); }
+function ctTriesIn(list, from, to) { return list.filter(c => c.date >= from && c.date <= to).length; }
+// 學生姓名一律從名冊即時取（改名後舊紀錄也會跟著變），名冊找不到才用紀錄裡的快照
+function ctNameOf(c) { return ctStudents.find(x => x._id === c.studentId)?.name || c.studentName || ''; }
+const CT_FLAG_LABEL = '🚩 需主管關注';
 const CT_CALLEES = ['母親','父親','祖父母','其他'];
 
 // ── 電訪週期 ──
@@ -5034,6 +5050,7 @@ window.ctOpenForm = function(studentId, contactId) {
   g('ctfContent').value   = c?.content || '';
   g('ctfFollowUp').value  = c?.followUp || '';
   g('ctfNextDate').value  = c?.nextDate || '';
+  g('ctfFlag').checked    = !!c?.flag;
   g('ctModal').classList.add('show');
   setTimeout(() => g('ctfContent').focus(), 50);
 };
@@ -5052,8 +5069,11 @@ window.ctSaveContact = async function() {
     teacherName: c?.teacherName || currentUser.name,
     date, method: g('ctfMethod').value, callee: g('ctfCallee').value,
     content, followUp: g('ctfFollowUp').value.trim(), nextDate: g('ctfNextDate').value,
+    flag: g('ctfFlag').checked,
     savedAt: Date.now()
   };
+  // 重新勾選「需主管關注」時清掉之前的已處理標記；取消勾選也清掉
+  if (!c?.flag || !data.flag) { data.flagResolvedAt = null; data.flagResolvedBy = ''; }
   showLoading('儲存中...');
   try {
     if (contactId) {
@@ -5070,7 +5090,7 @@ window.ctSaveContact = async function() {
 };
 window.ctDeleteContact = async function(id) {
   const c = ctContacts.find(x => x._id === id); if (!c) return;
-  if (!confirm(`刪除 ${c.date} 對「${c.studentName}」的電訪紀錄？`)) return;
+  if (!confirm(`刪除 ${c.date} 對「${ctNameOf(c)}」的電訪紀錄？`)) return;
   showLoading('刪除中...');
   try { await deleteDoc(doc(db,'contacts',id)); showToast('🗑 已刪除'); await ctReload(); }
   catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
@@ -5092,8 +5112,9 @@ function ctHistoryHtml(list, canEdit, showTeacher) {
     <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
         <div><b>${esc(c.date)}</b>
-          <span class="tag tag-blue" style="margin-left:4px">${esc(CT_METHODS[c.method]||c.method||'')}</span>
+          <span class="tag ${c.method==='noanswer'?'tag-orange':'tag-blue'}" style="margin-left:4px">${esc(CT_METHODS[c.method]||c.method||'')}${c.method==='noanswer'&&!CT_COUNT_NOANSWER?'（不計）':''}</span>
           ${c.callee ? `<span class="tag tag-purple">${esc(c.callee)}</span>` : ''}
+          ${c.flag ? `<span class="tag ${c.flagResolvedAt?'tag-green':'tag-red'}">${c.flagResolvedAt?'✓ 主管已處理':'🚩 需主管關注'}</span>` : ''}
           ${showTeacher ? `<span style="color:var(--muted);font-size:11px;margin-left:4px">${esc(c.teacherName||c.teacherId)}</span>` : ''}
         </div>
         ${canEdit ? `<div style="display:flex;gap:6px">
@@ -5123,12 +5144,21 @@ window.renderTeacherContacts = async function() {
   try { await ctLoadMine(); } catch(e) { box.innerHTML = `<div class="empty"><div>❌ ${esc(authErrMsg(e))}</div></div>`; console.error(e); return; }
   ctRenderTeacherList();
 };
+let ctTeacherFilter = 'all';
+window.ctSetTeacherFilter = function(f) {
+  ctTeacherFilter = f;
+  document.getElementById('ctFilterAll').className     = 'btn btn-sm ' + (f === 'all'     ? 'btn-purple' : 'btn-ghost');
+  document.getElementById('ctFilterMissing').className = 'btn btn-sm ' + (f === 'missing' ? 'btn-purple' : 'btn-ghost');
+  ctRenderTeacherList();
+};
 window.ctRenderTeacherList = function() {
   const q = (document.getElementById('ctSearch').value || '').trim();
   const [from, to] = ctMonthRange();
-  const list = ctStudents
-    .filter(s => !q || s.name.includes(q) || (s.sourceClasses||[]).some(c => c.includes(q)))
-    .sort((a,b) => (a.sourceClasses?.[0]||'').localeCompare(b.sourceClasses?.[0]||'') || a.name.localeCompare(b.name));
+  const isDone = s => ctDoneIn(ctContacts.filter(c => c.studentId === s._id), from, to);
+  const all = ctStudents.filter(s => !q || s.name.includes(q) || (s.sourceClasses||[]).some(c => c.includes(q)));
+  const list = all
+    .filter(s => ctTeacherFilter !== 'missing' || !isDone(s))
+    .sort((a,b) => (isDone(a) - isDone(b)) || a.name.localeCompare(b.name));   // 未填排前面
   // 依「我教這位學生的班別」分組（classTeachers: 班別 → 老師）；
   // 沒有紀錄的（舊資料或主管手動配對）放到最後一組，並顯示全部班別
   const groups = {};
@@ -5138,27 +5168,30 @@ window.ctRenderTeacherList = function() {
     (groups[g] ||= []).push(s);
   });
   const groupKeys = Object.keys(groups).sort((a,b) => (a==='未標示班別') - (b==='未標示班別') || a.localeCompare(b));
-  const done = list.filter(s => ctContacts.some(c => c.studentId === s._id && c.date >= from && c.date <= to)).length;
+  const done = all.filter(isDone).length;
   const isCur = ctTeacherMonth === ctPeriodYm(todayISO());
   const [, dueDate] = ctPeriodBounds(ctTeacherMonth);
   const daysLeft = Math.round((new Date(dueDate) - new Date(todayISO())) / 86400000);
   document.getElementById('ctTeacherSummary').innerHTML =
-    `${isCur ? '本期' : ''}${ctMonthLabel(ctTeacherMonth)}${isCur ? (daysLeft === 0 ? '　<b style="color:var(--red)">⏰ 今天截止</b>' : `　距截止 ${daysLeft} 天`) : ''}<br>已電訪 <b style="color:${done===list.length&&list.length?'var(--teal)':'var(--yellow)'}">${done}</b> / ${list.length} 位`;
+    `${isCur ? '本期' : ''}${ctMonthLabel(ctTeacherMonth)}${isCur ? (daysLeft === 0 ? '　<b style="color:var(--red)">⏰ 今天截止</b>' : `　距截止 ${daysLeft} 天`) : ''}<br>已電訪 <b style="color:${done===all.length&&all.length?'var(--teal)':'var(--yellow)'}">${done}</b> / ${all.length} 位${all.length-done?`　<span style="color:var(--red)">未填 ${all.length-done}</span>`:''}`;
   document.getElementById('ctTeacherList').innerHTML = groupKeys.map(g => { const arr = groups[g]; return `
     <div style="font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 8px;letter-spacing:1px">${esc(g)}（${arr.length}）</div>
     ${arr.map(s => ctStudentCard(s, from, to, g === '未標示班別')).join('')}`; }).join('')
-    || '<div class="empty"><div class="empty-icon">📞</div><div>尚未配對任何學生，請聯絡主管</div></div>';
+    || (all.length ? '<div class="empty"><div class="empty-icon">🎉</div><div>本期全部完成</div></div>'
+                   : '<div class="empty"><div class="empty-icon">📞</div><div>尚未配對任何學生，請聯絡主管</div></div>');
 };
 function ctStudentCard(s, from, to, showClasses) {
   const mine = ctContacts.filter(c => c.studentId === s._id);
   const last = mine[0];
-  const done = mine.some(c => c.date >= from && c.date <= to);
+  const done = ctDoneIn(mine, from, to);
+  const tries = ctTriesIn(mine, from, to);
   const open = ctOpenStudentId === s._id;
   return `<div class="card" style="padding:12px 14px;margin-bottom:8px;border-left:3px solid ${done?'var(--teal)':'var(--red)'}">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer" onclick="ctToggleStudent('${s._id}')">
       <div>
         <div style="font-weight:700;font-size:15px">${esc(s.name)}
-          <span class="tag ${done?'tag-green':'tag-red'}" style="margin-left:6px">${done?'已填':'未填'}</span>
+          <span class="tag ${done?'tag-green':'tag-red'}" style="margin-left:6px">${done?'已填':(tries?`未填（已嘗試 ${tries} 次）`:'未填')}</span>
+          ${mine.some(c => c.flag && !c.flagResolvedAt) ? '<span class="tag tag-red">🚩</span>' : ''}
           <span class="chevron" style="margin-left:4px;color:var(--muted);font-size:11px">${open?'▲':'▼'}</span></div>
         ${showClasses && (s.sourceClasses||[]).length ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">班別：${esc(s.sourceClasses.join('、'))}</div>` : ''}
         <div style="font-size:12px;margin-top:5px">${ctPhoneLinks(s.phones)}</div>
@@ -5177,11 +5210,11 @@ window.ctToggleStudent = function(id) { ctOpenStudentId = ctOpenStudentId === id
 
 // ── 匯出（CSV / 列印）──
 function ctRowsOf(list) {
-  const head = ['日期','老師','學生','班別','電話','方式','對象','溝通內容','待追蹤','下次聯絡'];
+  const head = ['日期','老師','學生','班別','電話','方式','對象','溝通內容','待追蹤','下次聯絡','需主管關注'];
   const rows = list.map(c => {
     const s = ctStudents.find(x => x._id === c.studentId);
-    return [c.date, c.teacherName||c.teacherId, c.studentName, (s?.sourceClasses||[]).join('、'), (s?.phones||[]).join(' / '),
-            CT_METHODS[c.method]||c.method||'', c.callee||'', c.content||'', c.followUp||'', c.nextDate||''];
+    return [c.date, c.teacherName||c.teacherId, ctNameOf(c), (s?.sourceClasses||[]).join('、'), (s?.phones||[]).join(' / '),
+            CT_METHODS[c.method]||c.method||'', c.callee||'', c.content||'', c.followUp||'', c.nextDate||'', c.flag ? (c.flagResolvedAt ? '已處理' : '是') : ''];
   });
   return [head, ...rows];
 }
@@ -5191,7 +5224,7 @@ function ctFilterByRange(list, from, to) {
 function ctPrintHtml(list, title, metaText) {
   // 依老師 → 學生 分組
   const byT = {};
-  list.forEach(c => { ((byT[c.teacherName||c.teacherId] ||= {})[c.studentName] ||= []).push(c); });
+  list.forEach(c => { ((byT[c.teacherName||c.teacherId] ||= {})[ctNameOf(c)] ||= []).push(c); });
   const now = new Date().toLocaleString('zh-TW');
   let body = '';
   Object.keys(byT).sort().forEach(tn => {
@@ -5201,7 +5234,7 @@ function ctPrintHtml(list, title, metaText) {
       const s = ctStudents.find(x => x._id === arr[0].studentId);
       body += `<h3>${esc(sn)} <span class="meta">${esc((s?.sourceClasses||[]).join('、'))}　${esc((s?.phones||[]).join(' / '))}</span></h3>
         <table><thead><tr><th style="width:84px">日期</th><th style="width:56px">方式</th><th style="width:56px">對象</th><th>溝通內容</th><th style="width:22%">待追蹤 / 下次聯絡</th></tr></thead><tbody>` +
-        arr.map(c => `<tr><td>${esc(c.date)}</td><td>${esc(CT_METHODS[c.method]||c.method||'')}</td><td>${esc(c.callee||'')}</td><td class="pre">${esc(c.content||'')}</td><td class="pre">${esc(c.followUp||'')}${c.nextDate?`<br><span class="meta">下次：${esc(c.nextDate)}</span>`:''}</td></tr>`).join('') +
+        arr.map(c => `<tr><td>${esc(c.date)}</td><td>${esc(CT_METHODS[c.method]||c.method||'')}</td><td>${esc(c.callee||'')}</td><td class="pre">${c.flag?'🚩 ':''}${esc(c.content||'')}</td><td class="pre">${esc(c.followUp||'')}${c.nextDate?`<br><span class="meta">下次：${esc(c.nextDate)}</span>`:''}</td></tr>`).join('') +
         `</tbody></table>`;
     });
   });
@@ -5253,6 +5286,7 @@ window.renderAdminContacts = async function() {
   showLoading('載入電訪資料...');
   try { await ctAdminLoad(); } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
   hideLoading();
+  ctUpdateFlagBadge();
   ctAdminSwitch(ctAdminSection);
 };
 window.ctAdminSwitch = function(sec, el) {
@@ -5281,7 +5315,7 @@ function ctMissingData(from, to) {
   ctActiveStudents().forEach(s => (s.teacherIds||[]).forEach(tid => {
     const b = byT[tid] ||= { name:tid, total:0, missing:[] };
     b.total++;
-    const has = ctContacts.some(c => c.studentId === s._id && c.teacherId === tid && c.date >= from && c.date <= to);
+    const has = ctDoneIn(ctContacts.filter(c => c.studentId === s._id && c.teacherId === tid), from, to);
     if (!has) b.missing.push(s);
   }));
   return Object.entries(byT).filter(([,b]) => b.total > 0)
@@ -5472,8 +5506,16 @@ window.ctToggleStudentActive = async function(id) {
 };
 window.ctDeleteStudent = async function(id) {
   const s = ctStudents.find(x => x._id === id); if (!s) return;
-  const n = ctContacts.filter(c => c.studentId === id).length;
-  if (!confirm(`刪除學生「${s.name}」？${n?`\n其 ${n} 筆電訪紀錄會保留，但不再顯示於名冊。`:''}\n（只是畢業或退班請改用「停用」）`)) return;
+  showLoading('檢查紀錄...');
+  let n = 0;
+  try { n = (await getDocs(query(collection(db,'contacts'), where('studentId','==',id)))).size; }
+  catch(e) { hideLoading(); showToast('❌ '+authErrMsg(e),'error'); return; }
+  hideLoading();
+  if (n) {
+    alert(`「${s.name}」有 ${n} 筆電訪紀錄，不能直接刪除（紀錄會變成找不到學生）。\n\n退班／畢業請改用「🚫 停用」；若是重複資料請用「🧹 合併重複」。`);
+    return;
+  }
+  if (!confirm(`刪除學生「${s.name}」？此學生沒有任何電訪紀錄。\n（只是畢業或退班請改用「停用」）`)) return;
   showLoading('刪除中...');
   try { await deleteDoc(doc(db,'ctStudents',id)); await ctAdminLoad(); ctRenderPairs(); showToast('🗑 已刪除'); }
   catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
@@ -5489,7 +5531,25 @@ function ctRecordsFiltered() {
   const tid = document.getElementById('ctRecTeacher').value;
   const q   = (document.getElementById('ctRecSearch').value||'').trim();
   const from = document.getElementById('ctRecFrom').value, to = document.getElementById('ctRecTo').value;
-  return ctFilterByRange(ctContacts, from, to).filter(c => (!tid || c.teacherId === tid) && (!q || (c.studentName||'').includes(q) || (c.content||'').includes(q)));
+  const flagOnly = document.getElementById('ctRecFlagOnly').checked;
+  const base = flagOnly ? ctContacts.filter(c => c.flag && !c.flagResolvedAt) : ctFilterByRange(ctContacts, from, to);
+  return base.filter(c => (!tid || c.teacherId === tid) && (!q || ctNameOf(c).includes(q) || (c.content||'').includes(q)));
+}
+// 主管：把「需主管關注」標成已處理（或取消）
+window.ctResolveFlag = async function(id, resolved) {
+  const c = ctContacts.find(x => x._id === id); if (!c) return;
+  try {
+    await updateDoc(doc(db,'contacts',id), resolved ? { flagResolvedAt:Date.now(), flagResolvedBy:currentUser.id } : { flagResolvedAt:null, flagResolvedBy:'' });
+    Object.assign(c, resolved ? { flagResolvedAt:Date.now(), flagResolvedBy:currentUser.id } : { flagResolvedAt:null, flagResolvedBy:'' });
+    ctAdminRenderRecords(); ctUpdateFlagBadge();
+    showToast(resolved ? '✓ 已標記處理' : '已改回待處理');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+};
+// 電訪管理分頁上的待處理數
+function ctUpdateFlagBadge() {
+  const n = ctContacts.filter(c => c.flag && !c.flagResolvedAt).length;
+  const el = document.getElementById('ctFlagBadge');
+  if (el) { el.textContent = n ? `🚩 ${n}` : ''; el.style.display = n ? 'inline-block' : 'none'; }
 }
 window.ctAdminRenderRecords = function() {
   const list = ctRecordsFiltered();
@@ -5508,14 +5568,16 @@ window.ctAdminRenderRecords = function() {
     lastYm = ym;
     return head + `<div class="card" style="padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
-        <div><b>${esc(c.date)}</b>　<span style="font-weight:700">${esc(c.studentName)}</span>
+        <div><b>${esc(c.date)}</b>　<span style="font-weight:700">${esc(ctNameOf(c))}</span>
           <span style="color:var(--muted);font-size:12px">${esc((s?.sourceClasses||[]).join('、'))}</span>
-          <span class="tag tag-blue" style="margin-left:6px">${esc(CT_METHODS[c.method]||c.method||'')}</span>
+          <span class="tag ${c.method==='noanswer'?'tag-orange':'tag-blue'}" style="margin-left:6px">${esc(CT_METHODS[c.method]||c.method||'')}</span>
           ${c.callee?`<span class="tag tag-purple">${esc(c.callee)}</span>`:''}
+          ${c.flag?`<span class="tag ${c.flagResolvedAt?'tag-green':'tag-red'}">${c.flagResolvedAt?'✓ 已處理':'🚩 需主管關注'}</span>`:''}
           <span style="color:var(--purple);font-size:12px;margin-left:6px">${esc(c.teacherName||c.teacherId)}</span>
           ${c.lastEditedName?`<span style="color:var(--muted);font-size:11px;margin-left:6px">（${esc(c.lastEditedName)} 編輯）</span>`:''}
         </div>
         <div style="display:flex;gap:6px">
+          ${c.flag ? (c.flagResolvedAt ? `<button class="btn btn-ghost btn-sm" onclick="ctResolveFlag('${c._id}',false)">↩ 改回待處理</button>` : `<button class="btn btn-teal btn-sm" onclick="ctResolveFlag('${c._id}',true)">✓ 已處理</button>`) : ''}
           <button class="btn btn-ghost btn-sm" onclick="ctOpenForm('${c.studentId}','${c._id}')">✏️</button>
           <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="ctDeleteContact('${c._id}')">🗑</button>
         </div>
@@ -5843,7 +5905,10 @@ window.ctRunImport = async function() {
     <div class="field-wrap"><label class="field-label">溝通內容</label>
       <textarea class="field-input" id="ctfContent" rows="5" placeholder="學習狀況、出缺勤、作業、家長回饋…" style="resize:vertical;font-family:inherit"></textarea></div>
     <div class="field-wrap"><label class="field-label">待追蹤事項（選填）</label><input class="field-input" id="ctfFollowUp" placeholder="例：下週確認補考安排"></div>
-    <div class="field-wrap" style="margin-bottom:0"><label class="field-label">下次聯絡日期（選填）</label><input class="field-input" type="date" id="ctfNextDate"></div>
+    <div class="field-wrap"><label class="field-label">下次聯絡日期（選填）</label><input class="field-input" type="date" id="ctfNextDate"></div>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:10px 12px;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.25);border-radius:10px">
+      <input type="checkbox" id="ctfFlag" style="accent-color:var(--red);width:16px;height:16px"> 🚩 需主管關注（家長反映、特殊狀況等，主管會在紀錄頁看到）
+    </label>
     <div class="modal-actions">
       <button class="btn btn-ghost" style="flex:1" onclick="ctCloseForm()">取消</button>
       <button class="btn btn-teal" style="flex:1;padding:10px" onclick="ctSaveContact()">☁️ 儲存</button>
@@ -5895,7 +5960,7 @@ window.ctRunImport = async function() {
       <button class="tab" onclick="adminSwitchTab('classreport',this)">📊 班級報表</button>
       <button class="tab" onclick="adminSwitchTab('promote',this)">🎓 升班管理</button>
       <button class="tab" onclick="adminSwitchTab('tasks',this)">📸 任務派遣</button>
-      <button class="tab" onclick="adminSwitchTab('contacts',this)">📞 電訪管理</button>
+      <button class="tab" onclick="adminSwitchTab('contacts',this)">📞 電訪管理 <span id="ctFlagBadge" class="tag tag-red" style="display:none;margin-left:4px"></span></button>
       <button class="tab" onclick="adminSwitchTab('accounts',this)">⚙️ 帳號管理</button>
     </div>
 
@@ -5970,9 +6035,10 @@ window.ctRunImport = async function() {
             <input class="field-input" type="date" id="ctRecFrom" onchange="document.getElementById('ctRecMonth').value='';ctAdminRenderRecords()">
             <input class="field-input" type="date" id="ctRecTo" onchange="document.getElementById('ctRecMonth').value='';ctAdminRenderRecords()">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button class="btn btn-purple btn-sm" onclick="ctExportAdmin('print')">🖨 列印版</button>
             <button class="btn btn-ghost btn-sm" onclick="ctExportAdmin('csv')">📄 CSV</button>
+            <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;color:var(--red)"><input type="checkbox" id="ctRecFlagOnly" onchange="ctAdminRenderRecords()" style="accent-color:var(--red);width:16px;height:16px"> 只看 🚩 待處理</label>
           </div>
         </div>
         <div id="ctRecordsOut"></div>
