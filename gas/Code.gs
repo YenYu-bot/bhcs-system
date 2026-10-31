@@ -14,6 +14,10 @@
  * 指令碼屬性（專案設定 → 指令碼屬性）：
  *   LINE_TOKEN   : LINE Messaging API 的 Channel access token (long-lived)
  *   LINE_TARGET  : 推播對象 ID（userId 或 groupId，用 doPost 取得）
+ *   ALERT_EMAIL  :（選填）失敗通知要寄到的信箱；沒設就寄給執行者本人
+ *
+ * 失敗通知：dailyCheck 出錯會先試著推一則錯誤到 LINE，LINE 也失敗就寄 Email。
+ * 另有 healthCheck（每晚 23:30）：當天 22:00 的檢查若沒成功，寄 Email + LINE 提醒。
  * ────────────────────────────────────────────────────────────
  */
 
@@ -145,8 +149,45 @@ function linePush_(text) {
   }
 }
 
+// ── 失敗通知 ─────────────────────────────────────────────────
+function alertEmail_() {
+  return PropertiesService.getScriptProperties().getProperty('ALERT_EMAIL') || Session.getEffectiveUser().getEmail();
+}
+function notifyFailure_(subject, body) {
+  var sentLine = false;
+  try { linePush_('❌ ' + subject + '\n' + String(body).slice(0, 800)); sentLine = true; } catch (e) { Logger.log('LINE 通知失敗：' + e.message); }
+  try {
+    MailApp.sendEmail({ to: alertEmail_(), subject: '[百宏教室日誌通知] ' + subject,
+      body: body + '\n\n（LINE 通知' + (sentLine ? '已送出' : '也失敗') + '）\n腳本：' + ScriptApp.getScriptId() });
+  } catch (e) { Logger.log('Email 通知失敗：' + e.message); }
+}
+function markSuccess_(iso) { PropertiesService.getScriptProperties().setProperty('LAST_SUCCESS', iso); }
+
 // ── 主流程：每晚 22:00 由觸發器呼叫 ──────────────────────────
 function dailyCheck() {
+  var iso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  try {
+    dailyCheckCore_();
+    markSuccess_(iso);
+  } catch (e) {
+    Logger.log('dailyCheck 失敗：' + e.stack);
+    notifyFailure_('每日檢查失敗 ' + iso, '錯誤：' + e.message + '\n\n' + (e.stack || ''));
+    throw e;   // 讓 GAS 執行記錄也顯示失敗
+  }
+}
+
+/** 每晚 23:30：當天的 dailyCheck 沒成功就提醒（觸發器沒裝、授權過期、連 catch 都沒跑到的情況） */
+function healthCheck() {
+  var iso  = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var last = PropertiesService.getScriptProperties().getProperty('LAST_SUCCESS') || '（從未）';
+  if (last === iso) return;
+  var hasTrigger = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'dailyCheck'; });
+  notifyFailure_('今天 ' + iso + ' 的每日檢查沒有成功',
+    '最後一次成功：' + last + '\n每日 22:00 觸發器：' + (hasTrigger ? '已安裝' : '❗ 未安裝，請在 Apps Script 執行 installTrigger') +
+    '\n請到 Apps Script 的「執行記錄」查看原因。');
+}
+
+function dailyCheckCore_() {
   var now     = new Date();
   var mmdd    = Utilities.formatDate(now, TZ, 'MM/dd');
   var iso     = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
@@ -431,19 +472,19 @@ function taskOverdueSummary_(iso, teachers) {
 // ── 一鍵安裝／移除觸發器 ─────────────────────────────────────
 function installTrigger() {
   removeTriggers();
-  ScriptApp.newTrigger('dailyCheck')
-    .timeBased()
-    .atHour(22)
-    .nearMinute(0)
-    .everyDays(1)
-    .inTimezone(TZ)
-    .create();
-  Logger.log('✅ 已安裝每日 22:00 觸發器（Asia/Taipei）');
+  ScriptApp.newTrigger('dailyCheck').timeBased().atHour(22).nearMinute(0).everyDays(1).inTimezone(TZ).create();
+  ScriptApp.newTrigger('healthCheck').timeBased().atHour(23).nearMinute(30).everyDays(1).inTimezone(TZ).create();
+  Logger.log('✅ 已安裝觸發器：dailyCheck 每日 22:00、healthCheck 每日 23:30（Asia/Taipei）');
 }
 function removeTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'dailyCheck') ScriptApp.deleteTrigger(t);
+    var f = t.getHandlerFunction();
+    if (f === 'dailyCheck' || f === 'healthCheck') ScriptApp.deleteTrigger(t);
   });
+}
+/** 測試失敗通知（會真的寄一封 Email、推一則 LINE） */
+function testFailureNotice() {
+  notifyFailure_('測試通知', '這是手動測試，可忽略。收到代表失敗通知管道正常。');
 }
 
 /** 只測 Firestore 連線（不推 LINE）：第一次執行會跳授權視窗 */

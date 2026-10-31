@@ -80,16 +80,71 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isTeacher() && resource.data.teacherId == me());
     }
 
-    // 教室日誌相關集合：登入的職員皆可讀寫（維持舊版行為，但擋掉所有匿名存取）
-    match /classes/{id}        { allow read, write: if isStaff(); }
-    match /entries/{id}        { allow read, write: if isStaff(); }
-    match /scheduleSets/{id}   { allow read, write: if isStaff(); }
-    match /scheduleConfig/{id} { allow read, write: if isStaff(); }
-    match /schedule/{id}       { allow read, write: if isStaff(); }
-    match /closures/{id}       { allow read, write: if isStaff(); }
-    match /tasks/{id}          { allow read, write: if isStaff(); }
-    match /taskSubs/{id}       { allow read, write: if isStaff(); }
-    match /taskPhotos/{id}     { allow read, write: if isStaff(); }
+    // ── 教室日誌相關集合 ──
+    // 讀取：登入的職員皆可（報表、共同授課、抽查審核都需要看別人的資料）
+    // 寫入：只能動自己的；主管全權
+    function isClassMember(classId) {
+      return me() in get(/databases/$(db)/documents/classes/$(classId)).data.get('memberIds', []);
+    }
+    function isClassOwner(classId) {
+      return get(/databases/$(db)/documents/classes/$(classId)).data.teacherId == me();
+    }
+
+    // 班級：主導老師可新增／改／刪；共同授課或代課老師可改名單；主管全權
+    match /classes/{id} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == me());
+      allow update: if isAdmin() || (isTeacher()
+        && (resource.data.teacherId == me() || me() in resource.data.get('memberIds', []))
+        && request.resource.data.teacherId == resource.data.teacherId          // 老師不能把班級轉給別人
+        && request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []));  // 也不能改協作名單
+      allow delete: if isAdmin() || (isTeacher() && resource.data.teacherId == me());
+    }
+
+    // 日誌：填寫者、該班主導老師、該班協作老師可新增／改／刪；主管全權
+    function canTouchEntry(d) {
+      return d.teacherId == me() || isClassOwner(d.classId) || isClassMember(d.classId);
+    }
+    match /entries/{id} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == me()
+                      && (isClassOwner(request.resource.data.classId) || isClassMember(request.resource.data.classId)));
+      allow update: if isAdmin() || (isTeacher() && canTouchEntry(resource.data)
+                      && request.resource.data.teacherId == resource.data.teacherId    // 原始填寫者不變
+                      && request.resource.data.classId == resource.data.classId);
+      allow delete: if isAdmin() || (isTeacher() && canTouchEntry(resource.data));
+    }
+
+    // 停課：老師只能替自己的班申請（status 由前端固定為 pending）；審核／刪除限主管
+    match /closures/{id} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.createdBy == me()
+                      && request.resource.data.get('status', '') == 'pending');
+      allow update, delete: if isAdmin();
+    }
+
+    // 課表、任務設定：老師唯讀
+    match /scheduleSets/{id}   { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /scheduleConfig/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /schedule/{id}       { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /tasks/{id}          { allow read: if isStaff(); allow write: if isAdmin(); }
+
+    // 抽查繳交：老師只能新增／更新自己的；審核（status/reviewNote）與刪除限主管
+    match /taskSubs/{id} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == me()
+                      && request.resource.data.get('status', '') == 'submitted');
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == me()
+                      && request.resource.data.teacherId == me()
+                      && request.resource.data.get('status', '') == 'submitted');   // 老師不能自己標「已通過」
+      allow delete: if isAdmin();
+    }
+    match /taskPhotos/{id} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == me());
+      allow update, delete: if isAdmin();
+    }
+
     match /archives/{id}       { allow read, write: if isAdmin(); }
     match /archiveChunks/{id}  { allow read, write: if isAdmin(); }
   }

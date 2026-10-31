@@ -5,8 +5,8 @@ service cloud.firestore {
   match /databases/{db}/documents {
 
     function signedIn() { return request.auth != null; }
-    // 主管：固定帳號 admin@bhcs.local（由登入頁「建立主管帳號」建立，之後無法再被註冊）
-    function isAdmin()  { return signedIn() && request.auth.token.email == 'admin@bhcs.local'; }
+    // 主管：固定帳號 admin@bhcs.local（由登入頁「建立主管帳號」建立），或 admins/{uid} 列出的備援主管（真實 Email）
+    function isAdmin()  { return signedIn() && (request.auth.token.email == 'admin@bhcs.local' || exists(/databases/$(db)/documents/admins/$(request.auth.uid))); }
     // 老師：Auth 使用者必須有對應的 teachers/{uid} 文件；被主管刪除或重設密碼後舊登入即失效
     function isTeacher(){ return signedIn() && exists(/databases/$(db)/documents/teachers/$(request.auth.uid)); }
     function me()       { return get(/databases/$(db)/documents/teachers/$(request.auth.uid)).data.userId; }
@@ -19,11 +19,25 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 老師名單（只有姓名與帳號，沒有密碼）
-    match /teachers/{uid} {
-      allow read: if isStaff();
+    // 備援主管帳號清單（主要主管建立；備援主管登入時 get 自己那筆）
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if isAdmin();
       allow write: if isAdmin();
     }
+
+    // 老師名單（只有姓名與帳號，沒有密碼）
+    //   老師只能把自己的 mustChangePassword 改成 false（改完密碼後）
+    match /teachers/{uid} {
+      allow read: if isStaff();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (isTeacher() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChangePassword','updatedAt'])
+        && request.resource.data.mustChangePassword == false);
+    }
+
+    // 名冊快照（匯入前自動保存）：只有主管
+    match /ctSnapshots/{id} { allow read, write: if isAdmin(); }
 
     // 電訪學生名冊（含家長電話）
     //   讀：主管全部；老師只能讀「配對給自己」的學生
@@ -60,7 +74,9 @@ service cloud.firestore {
     match /contacts/{id} {
       allow read:   if isAdmin() || (isTeacher() && resource.data.teacherId == me());
       allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == me());
-      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == me() && request.resource.data.teacherId == me());
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == me() && request.resource.data.teacherId == me()
+        // 「已處理」標記只有主管能設；老師重新勾選／取消旗標時只能清成 null
+        && (request.resource.data.get('flagResolvedAt', null) == null || request.resource.data.get('flagResolvedAt', null) == resource.data.get('flagResolvedAt', null)));
       allow delete: if isAdmin() || (isTeacher() && resource.data.teacherId == me());
     }
 
