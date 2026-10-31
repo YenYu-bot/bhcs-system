@@ -310,7 +310,7 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
           <div class="card-title" style="margin-bottom:0">📞 家長電訪</div>
           <div id="ctTeacherSummary" style="font-size:13px;color:var(--muted)"></div>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin:8px 0 10px;line-height:1.6">列出配對給你的學生。手機上點電話號碼可直接撥號；每位學生每月至少電訪一次，未填會標紅。</div>
+        <div style="font-size:12px;color:var(--muted);margin:8px 0 10px;line-height:1.6">列出配對給你的學生。手機上點電話號碼可直接撥號；每位學生每期至少電訪一次（每月 11 日起算、次月 10 日截止），未填會標紅。</div>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
           <button class="btn btn-ghost btn-sm" onclick="ctSetTeacherMonth(-1)">◀</button>
           <input class="field-input" type="month" id="ctTeacherMonth" onchange="ctSetTeacherMonth(0)" style="flex:1;text-align:center">
@@ -4829,18 +4829,39 @@ let _pdfjs          = null;
 const CT_METHODS = { phone:'電話', line:'LINE', inperson:'面談', noanswer:'未接通' };
 const CT_CALLEES = ['母親','父親','祖父母','其他'];
 
-// 月份工具：'2026-10' → ['2026-10-01','2026-10-31']（當月則迄日=今天）
-let ctTeacherMonth = todayISO().slice(0,7);
+// ── 電訪週期 ──
+// 每月 CT_CYCLE_START_DAY 日開始新一期，到次月 (CT_CYCLE_START_DAY-1) 日截止。
+//   例：「10月份」= 10/11 ～ 11/10；「12月份」= 12/11 ～ 隔年 1/10。
+//   ※ GAS 推播腳本 gas/Code.gs 有同一個常數，兩邊要一致。
+const CT_CYCLE_START_DAY = 11;
+const pad2 = n => String(n).padStart(2,'0');
+// 'YYYY-MM'（期別）→ [from, to]；當期則 to 取今天（統計用）；要完整截止日用 ctPeriodBounds
+function ctPeriodBounds(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  return [`${y}-${pad2(m)}-${pad2(CT_CYCLE_START_DAY)}`, `${ny}-${pad2(nm)}-${pad2(CT_CYCLE_START_DAY - 1)}`];
+}
+// 某個日期屬於哪一期（'YYYY-MM'）
+function ctPeriodYm(iso) {
+  const y = Number(iso.slice(0,4)), m = Number(iso.slice(5,7)), d = Number(iso.slice(8,10));
+  let pm = d >= CT_CYCLE_START_DAY ? m : m - 1, py = y;
+  if (pm < 1) { pm = 12; py--; }
+  return `${py}-${pad2(pm)}`;
+}
+let ctTeacherMonth = ctPeriodYm(todayISO());
 function ctMonthRangeOf(ym) {
   const t = todayISO();
-  if (!ym) ym = t.slice(0,7);
-  const [y, m] = ym.split('-').map(Number);
-  const last = new Date(y, m, 0).getDate();
-  const to = ym === t.slice(0,7) ? t : `${ym}-${String(last).padStart(2,'0')}`;
-  return [`${ym}-01`, to];
+  if (!ym) ym = ctPeriodYm(t);
+  const [from, to] = ctPeriodBounds(ym);
+  return [from, to > t ? t : to];
 }
 function ctMonthRange() { return ctMonthRangeOf(ctTeacherMonth); }
-function ctMonthLabel(ym) { return ym ? `${ym.slice(0,4)} 年 ${Number(ym.slice(5,7))} 月` : ''; }
+function ctMonthLabel(ym) {
+  if (!ym) return '';
+  const [from, to] = ctPeriodBounds(ym);
+  const md = d => `${Number(d.slice(5,7))}/${Number(d.slice(8,10))}`;
+  return `${ym.slice(0,4)} 年 ${Number(ym.slice(5,7))} 月份（${md(from)}～${md(to)}）`;
+}
 // 把 input[type=month] 的值套到起迄日期欄；空值＝不限
 function ctApplyMonth(monthId, fromId, toId, cb) {
   const ym = document.getElementById(monthId).value;
@@ -4852,10 +4873,10 @@ function ctApplyMonth(monthId, fromId, toId, cb) {
 window.ctApplyMonth = ctApplyMonth;
 window.ctShiftMonth = function(monthId, delta, fromId, toId, cb) {
   const el = document.getElementById(monthId);
-  const ym = el.value || todayISO().slice(0,7);
+  const ym = el.value || ctPeriodYm(todayISO());
   const [y, m] = ym.split('-').map(Number);
   const d = new Date(y, m - 1 + delta, 1);
-  el.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  el.value = `${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
   ctApplyMonth(monthId, fromId, toId, cb);
 };
 window.ctSetTeacherMonth = function(delta) {
@@ -4863,9 +4884,9 @@ window.ctSetTeacherMonth = function(delta) {
   if (delta) {
     const [y, m] = (el.value || ctTeacherMonth).split('-').map(Number);
     const d = new Date(y, m - 1 + delta, 1);
-    el.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    el.value = `${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
   }
-  ctTeacherMonth = el.value || todayISO().slice(0,7);
+  ctTeacherMonth = el.value || ctPeriodYm(todayISO());
   const [from, to] = ctMonthRange();
   document.getElementById('ctExpFrom').value = from;
   document.getElementById('ctExpTo').value   = to;
@@ -5064,7 +5085,7 @@ function ctHistoryHtml(list, canEdit, showTeacher) {
   if (!list.length) return '<div style="font-size:12px;color:var(--muted);margin-top:10px">尚無電訪紀錄</div>';
   let lastYm = '';
   return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:4px">` + list.map(c => {
-    const ym = (c.date||'').slice(0,7);
+    const ym = c.date ? ctPeriodYm(c.date) : '';
     const head = ym !== lastYm ? `<div style="font-size:11px;font-weight:700;color:var(--purple);letter-spacing:1px;margin:8px 0 2px">${esc(ctMonthLabel(ym))}</div>` : '';
     lastYm = ym;
     return head + `
@@ -5096,7 +5117,7 @@ async function ctLoadMine() {
 }
 window.renderTeacherContacts = async function() {
   const mEl = document.getElementById('ctTeacherMonth');
-  if (!mEl.value) { mEl.value = todayISO().slice(0,7); ctTeacherMonth = mEl.value; const [f,t] = ctMonthRange(); document.getElementById('ctExpFrom').value = f; document.getElementById('ctExpTo').value = t; }
+  if (!mEl.value) { mEl.value = ctPeriodYm(todayISO()); ctTeacherMonth = mEl.value; const [f,t] = ctMonthRange(); document.getElementById('ctExpFrom').value = f; document.getElementById('ctExpTo').value = t; }
   const box = document.getElementById('ctTeacherList');
   box.innerHTML = '<div class="empty"><div>載入中...</div></div>';
   try { await ctLoadMine(); } catch(e) { box.innerHTML = `<div class="empty"><div>❌ ${esc(authErrMsg(e))}</div></div>`; console.error(e); return; }
@@ -5118,9 +5139,11 @@ window.ctRenderTeacherList = function() {
   });
   const groupKeys = Object.keys(groups).sort((a,b) => (a==='未標示班別') - (b==='未標示班別') || a.localeCompare(b));
   const done = list.filter(s => ctContacts.some(c => c.studentId === s._id && c.date >= from && c.date <= to)).length;
-  const isCur = ctTeacherMonth === todayISO().slice(0,7);
+  const isCur = ctTeacherMonth === ctPeriodYm(todayISO());
+  const [, dueDate] = ctPeriodBounds(ctTeacherMonth);
+  const daysLeft = Math.round((new Date(dueDate) - new Date(todayISO())) / 86400000);
   document.getElementById('ctTeacherSummary').innerHTML =
-    `${isCur ? '本月' : ctMonthLabel(ctTeacherMonth)}（${from.slice(5)} ～ ${to.slice(5)}）已電訪 <b style="color:${done===list.length&&list.length?'var(--teal)':'var(--yellow)'}">${done}</b> / ${list.length} 位`;
+    `${isCur ? '本期' : ''}${ctMonthLabel(ctTeacherMonth)}${isCur ? (daysLeft === 0 ? '　<b style="color:var(--red)">⏰ 今天截止</b>' : `　距截止 ${daysLeft} 天`) : ''}<br>已電訪 <b style="color:${done===list.length&&list.length?'var(--teal)':'var(--yellow)'}">${done}</b> / ${list.length} 位`;
   document.getElementById('ctTeacherList').innerHTML = groupKeys.map(g => { const arr = groups[g]; return `
     <div style="font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 8px;letter-spacing:1px">${esc(g)}（${arr.length}）</div>
     ${arr.map(s => ctStudentCard(s, from, to, g === '未標示班別')).join('')}`; }).join('')
@@ -5238,14 +5261,14 @@ window.ctAdminSwitch = function(sec, el) {
   document.querySelectorAll('#ctSubTabs .btn').forEach(b => { b.classList.toggle('btn-purple', b.dataset.sec === sec); b.classList.toggle('btn-ghost', b.dataset.sec !== sec); });
   if (sec === 'missing') {
     const mEl = document.getElementById('ctMissMonth');
-    if (!mEl.value && !document.getElementById('ctMissFrom').value) mEl.value = todayISO().slice(0,7);
+    if (!mEl.value && !document.getElementById('ctMissFrom').value) { mEl.value = ctPeriodYm(todayISO()); ctApplyMonth('ctMissMonth','ctMissFrom','ctMissTo'); }
     ctSetDefaultRange('ctMissFrom','ctMissTo'); ctRenderMissing();
   }
   if (sec === 'pairs')   ctRenderPairs();
   if (sec === 'records') {
     ctPopulateRecordFilters();
     const mEl = document.getElementById('ctRecMonth');
-    if (!mEl.dataset.init) { mEl.dataset.init = '1'; mEl.value = todayISO().slice(0,7); ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo'); }
+    if (!mEl.dataset.init) { mEl.dataset.init = '1'; mEl.value = ctPeriodYm(todayISO()); ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo'); }
     ctAdminRenderRecords();
   }
   if (sec === 'import')  ctRenderImportPreview();
@@ -5475,12 +5498,12 @@ window.ctAdminRenderRecords = function() {
   if (!list.length) { box.innerHTML = '<div class="empty"><div class="empty-icon">📞</div><div>沒有符合的電訪紀錄</div></div>'; return; }
   // 依月份分段（紀錄已依日期新→舊排序）
   const byMonth = {};
-  list.forEach(c => { const ym = (c.date||'').slice(0,7); (byMonth[ym] ||= []).push(c); });
-  document.getElementById('ctRecCount').textContent = `${list.length} 筆` + (Object.keys(byMonth).length > 1 ? `　${Object.keys(byMonth).sort().reverse().map(ym => `${Number(ym.slice(5,7))}月 ${byMonth[ym].length}`).join('、')}` : '');
+  list.forEach(c => { const ym = c.date ? ctPeriodYm(c.date) : ''; (byMonth[ym] ||= []).push(c); });
+  document.getElementById('ctRecCount').textContent = `${list.length} 筆` + (Object.keys(byMonth).length > 1 ? `　${Object.keys(byMonth).sort().reverse().map(ym => `${Number(ym.slice(5,7))}月份 ${byMonth[ym].length}`).join('、')}` : '');
   let lastYm = '';
   box.innerHTML = list.slice(0, 300).map(c => {
     const s = ctStudents.find(x => x._id === c.studentId);
-    const ym = (c.date||'').slice(0,7);
+    const ym = c.date ? ctPeriodYm(c.date) : '';
     const head = ym !== lastYm ? `<div style="font-size:12px;font-weight:700;color:var(--purple);letter-spacing:1px;margin:16px 0 8px">📅 ${esc(ctMonthLabel(ym))}（${byMonth[ym].length} 筆）</div>` : '';
     lastYm = ym;
     return head + `<div class="card" style="padding:12px 14px;margin-bottom:8px">
@@ -5888,6 +5911,7 @@ window.ctRunImport = async function() {
       <div id="ct-sec-missing">
         <div class="card">
           <div class="card-title">指定期間：每個「老師 × 學生」配對至少要有一筆電訪</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">電訪週期：每月 11 日起算、次月 10 日截止（例：10 月份 = 10/11～11/10）。選月份會自動帶入該期起迄。</div>
           <div class="field-row">
             <div><label class="field-label">開始日期</label><input class="field-input" type="date" id="ctMissFrom" onchange="document.getElementById('ctMissMonth').value='';ctRenderMissing()"></div>
             <div><label class="field-label">結束日期</label><input class="field-input" type="date" id="ctMissTo" onchange="document.getElementById('ctMissMonth').value='';ctRenderMissing()"></div>

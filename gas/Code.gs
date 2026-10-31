@@ -22,10 +22,28 @@ var APP_URL    = 'https://yenyu-bot.github.io/bhcs-system/';
 var TZ         = 'Asia/Taipei';
 var WEEKDAYS   = ['一','二','三','四','五','六','日'];   // index 0 = 週一
 
-// 電訪未填：每天都報各老師的「已填/應填」數；
-// 下列星期幾、以及每月最後 CT_DETAIL_LAST_DAYS 天，才列出未填學生姓名
+// 電訪週期：每月 CT_CYCLE_START_DAY 日開始新一期，到次月 (CT_CYCLE_START_DAY-1) 日截止。
+//   例：10 月份 = 10/11 ～ 11/10；12 月份 = 12/11 ～ 隔年 1/10。
+//   期間內每天報「該期」各老師的已填/應填數；下列星期幾、以及截止前 CT_DETAIL_LAST_DAYS 天列出未填學生姓名。
+//   ※ 網站 index.html 有同一個常數，兩邊要一致。
+var CT_CYCLE_START_DAY  = 11;
 var CT_DETAIL_WEEKDAYS  = ['一','四'];
 var CT_DETAIL_LAST_DAYS = 5;
+
+function pad2_(n) { return (n < 10 ? '0' : '') + n; }
+/** 指定日期落在哪一期：{ label:'10月份', from:'2026-10-11', to:'2026-11-10' } */
+function ctPeriodOf_(iso) {
+  var y = Number(iso.slice(0,4)), m = Number(iso.slice(5,7)), d = Number(iso.slice(8,10));
+  var pm = d >= CT_CYCLE_START_DAY ? m : m - 1, py = y;
+  if (pm < 1) { pm = 12; py--; }
+  var nm = pm + 1, ny = py; if (nm > 12) { nm = 1; ny++; }
+  return {
+    label: pm + '月份',
+    from:  py + '-' + pad2_(pm) + '-' + pad2_(CT_CYCLE_START_DAY),
+    to:    ny + '-' + pad2_(nm) + '-' + pad2_(CT_CYCLE_START_DAY - 1)
+  };
+}
+function daysBetween_(a, b) { return Math.round((new Date(b) - new Date(a)) / 86400000); }
 
 function prop_(k) {
   var v = PropertiesService.getScriptProperties().getProperty(k);
@@ -240,11 +258,12 @@ function dailyCheck() {
 }
 
 /**
- * 電訪：本月（1 日～今天）每個「老師 × 學生」配對至少要有一筆紀錄。
- * 每天報各老師的完成數；指定星期幾與月底最後幾天列出未填學生姓名。
+ * 電訪：本期（上月 11 日～本月 10 日，或本月 11 日～次月 10 日）每個「老師 × 學生」配對至少要有一筆紀錄。
+ * 每天報各老師的完成數；指定星期幾與截止前幾天列出未填學生姓名。
  */
 function contactSummary_(iso, weekday, nameOf) {
-  var from = iso.slice(0, 8) + '01';
+  var period = ctPeriodOf_(iso);
+  var from = period.from;
   var students = fsList_('ctStudents').filter(function (s) { return s.active !== false; });
   if (!students.length) return '';
 
@@ -263,24 +282,26 @@ function contactSummary_(iso, weekday, nameOf) {
   var tids = Object.keys(byT);
   if (!tids.length) return '';
 
-  var lastDay = new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0).getDate();
-  var dayNum  = Number(iso.slice(8, 10));
-  var detail  = CT_DETAIL_WEEKDAYS.indexOf(weekday) >= 0 || (lastDay - dayNum) < CT_DETAIL_LAST_DAYS;
+  var daysLeft = daysBetween_(iso, period.to);          // 距截止日還有幾天（截止當天 = 0）
+  var urgent   = daysLeft < CT_DETAIL_LAST_DAYS;
+  var detail   = CT_DETAIL_WEEKDAYS.indexOf(weekday) >= 0 || urgent;
 
   var totalAll = 0, missAll = 0;
   tids.forEach(function (t) { totalAll += byT[t].total; missAll += byT[t].missing.length; });
 
-  var out = ['📞 本月電訪進度（' + from.slice(5) + '～' + iso.slice(5) + '）　' +
-             (totalAll - missAll) + '/' + totalAll + '（' + Math.round((totalAll - missAll) / totalAll * 100) + '%）'];
+  var mmdd = function (d) { return Number(d.slice(5,7)) + '/' + Number(d.slice(8,10)); };
+  var out = ['📞 ' + period.label + '電訪進度（' + mmdd(from) + '～' + mmdd(period.to) + '）　' +
+             (totalAll - missAll) + '/' + totalAll + '（' + Math.round((totalAll - missAll) / totalAll * 100) + '%）' +
+             (daysLeft === 0 ? '　⏰ 今天截止' : daysLeft > 0 ? '　距截止 ' + daysLeft + ' 天' : '')];
   tids.sort(function (a, b) { return byT[b].missing.length - byT[a].missing.length; });
   tids.forEach(function (t) {
     var b = byT[t], n = nameOf[t] || t;
     if (!b.missing.length) { out.push('　✅ ' + n + '　' + b.total + '/' + b.total); return; }
-    out.push('　' + (dayNum >= lastDay - CT_DETAIL_LAST_DAYS + 1 ? '❌' : '⚠️') + ' ' + n + '　' +
+    out.push('　' + (urgent ? '❌' : '⚠️') + ' ' + n + '　' +
              (b.total - b.missing.length) + '/' + b.total + '　未填 ' + b.missing.length);
     if (detail) out.push('　　' + b.missing.join('、'));
   });
-  if (!detail) out.push('　（週' + CT_DETAIL_WEEKDAYS.join('、') + '與月底會列出未填學生）');
+  if (!detail) out.push('　（週' + CT_DETAIL_WEEKDAYS.join('、') + '與截止前 ' + CT_DETAIL_LAST_DAYS + ' 天會列出未填學生）');
   return out.join('\n');
 }
 
