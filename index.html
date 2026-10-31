@@ -289,6 +289,7 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
     <div><div class="brand-sub">百宏文教機構</div><div class="brand">📚 教室日誌系統</div></div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="badge badge-teal" id="teacherBadge">老師</span>
+      <button class="btn btn-ghost btn-sm" title="重新載入資料" onclick="teacherRefresh()">🔄</button>
       <button class="btn btn-ghost btn-sm" onclick="changeMyPassword()">🔑 改密碼</button>
       <button class="btn btn-ghost btn-sm" onclick="logout()">登出</button>
     </div>
@@ -768,6 +769,7 @@ onAuthStateChanged(auth, user => {
 window.logout = async function() {
   try { await signOut(auth); } catch(e) { console.error(e); }
   currentUser = null; myClasses = []; entries = []; allEntries = []; teachers = [];
+  ctStudents = []; ctContacts = []; closures = []; invalidateCache();
   showPage('login');
   document.getElementById('loginUser').value = '';
   document.getElementById('loginPass').value = '';
@@ -1236,13 +1238,33 @@ window.saveEntry = async function() {
     _lastSelectedClassId = null;
     document.getElementById('journalForm').style.display = 'none';
     document.getElementById('selectedClassInfo').style.display = 'none';
-    await loadEntries();
+    await loadEntries(true);
   } catch(e) { showToast('❌ '+e.message,'error'); }
   hideLoading();
 };
 
 // ── LOAD ENTRIES ──
-async function loadEntries() {
+// 老師端讀取快取：同一份資料 CACHE_TTL 內不重撈（切 tab 不會每次打 Firestore）；
+// 自己寫入後以 force=true 強制重撈；header 的 🔄 會清快取
+const CACHE_TTL = 60 * 1000;
+const _cacheAt = {};
+function cacheFresh(key) { return (Date.now() - (_cacheAt[key] || 0)) < CACHE_TTL; }
+function cacheMark(key) { _cacheAt[key] = Date.now(); }
+window.invalidateCache = function(...keys) { (keys.length ? keys : Object.keys(_cacheAt)).forEach(k => delete _cacheAt[k]); };
+window.teacherRefresh = async function() {
+  invalidateCache();
+  showLoading('重新載入...');
+  try {
+    await loadClasses(); await loadEntries(true);
+    const active = document.querySelector('#appPage .tab.active');
+    if (active) active.click();
+    showToast('🔄 已更新');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
+  hideLoading();
+};
+
+async function loadEntries(force) {
+  if (!force && cacheFresh('entries')) return;
   try {
     const byId = {};
     // 自己寫的日誌
@@ -1262,6 +1284,7 @@ async function loadEntries() {
     }
 
     entries = Object.values(byId).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+    cacheMark('entries');
   } catch(e) { console.error('loadEntries:', e); }
 }
 
@@ -1375,7 +1398,7 @@ window.editEntry = function(i) {
 window.delEntry = async function(i) {
   if (!confirm('確定刪除此日誌？')) return;
   showLoading('刪除中...');
-  try { await deleteDoc(doc(db,'entries',entries[i]._id)); showToast('🗑 已刪除'); await loadEntries(); renderHistory(); }
+  try { await deleteDoc(doc(db,'entries',entries[i]._id)); showToast('🗑 已刪除'); await loadEntries(true); renderHistory(); }
   catch(e) { showToast('❌ 刪除失敗','error'); }
   hideLoading();
 };
@@ -1671,6 +1694,13 @@ async function adminLoadAll() {
   try { const s=await getDocs(collection(db,'classes')); allClasses=s.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||'')); } catch(e) { console.error(e); }
   await loadSchedule();
   await loadClosures();
+  // 電訪「需主管關注」未處理數（只撈旗標紀錄，很少）
+  try {
+    const fl = await getDocs(query(collection(db,'contacts'), where('flag','==',true)));
+    const n = fl.docs.filter(d => !d.data().flagResolvedAt).length;
+    const el = document.getElementById('ctFlagBadge');
+    if (el) { el.textContent = n ? `🚩 ${n}` : ''; el.style.display = n ? 'inline-block' : 'none'; }
+  } catch(e) { console.error('flag badge:', e); }
   hideLoading();
   adminRenderOverview(); adminPopulateFilters(); renderAdminStudentPick();
   // Pre-fill check date with today
@@ -4544,11 +4574,13 @@ const CLOSURE_STATUS = {
   rejected: { label:'已駁回', color:'var(--red)'    }
 };
 
-async function loadClosures() {
+async function loadClosures(force) {
+  if (!force && !currentUser?.isAdmin && cacheFresh('closures')) return;
   try {
     const snap = await getDocs(collection(db,'closures'));
     closures = snap.docs.map(d => ({_id:d.id, ...d.data()}))
       .sort((a,b) => (b.date||'').localeCompare(a.date||''));
+    cacheMark('closures');
   } catch(e) { console.error('loadClosures:', e); closures = []; }
 }
 
@@ -4613,7 +4645,7 @@ window.closeTeacherClosure = function() {
 };
 
 async function renderMyClosures() {
-  await loadClosures();
+  await loadClosures(true);
   const el = document.getElementById('myClosureList');
   if (!el) return;
   const myIds = myClasses.map(c => c._id);
@@ -4974,8 +5006,18 @@ function ctApplyMonth(monthId, fromId, toId, cb) {
   const [from, to] = ym ? ctMonthRangeOf(ym) : ['', ''];
   document.getElementById(fromId).value = from;
   document.getElementById(toId).value   = to;
-  if (cb) cb();
+  ctRunWithRange(from, cb);
 }
+// 主管端：範圍超出已載入的部分就先補撈再渲染
+function ctRunWithRange(from, cb) {
+  if (!currentUser?.isAdmin || !cb) { if (cb) cb(); return; }
+  const need = from || '';
+  if (ctLoadedFrom === '' || (ctLoadedFrom !== null && need && need >= ctLoadedFrom)) { cb(); return; }
+  showLoading('載入更早的紀錄...');
+  ctEnsureContactsFrom(need).then(() => { hideLoading(); ctUpdateFlagBadge(); cb(); })
+    .catch(e => { hideLoading(); showToast('❌ '+authErrMsg(e),'error'); });
+}
+window.ctRunWithRange = ctRunWithRange;
 window.ctApplyMonth = ctApplyMonth;
 window.ctShiftMonth = function(monthId, delta, fromId, toId, cb) {
   const el = document.getElementById(monthId);
@@ -5187,8 +5229,8 @@ window.ctDeleteContact = async function(id) {
   hideLoading();
 };
 async function ctReload() {
-  if (currentUser?.isAdmin) { await ctAdminLoad(); ctAdminSwitch(ctAdminSection); }
-  else { await ctLoadMine(); ctRenderTeacherList(); }
+  if (currentUser?.isAdmin) { await ctAdminLoad(true); ctAdminSwitch(ctAdminSection); }
+  else { await ctLoadMine(true); ctRenderTeacherList(); }
 }
 
 function ctHistoryHtml(list, canEdit, showTeacher) {
@@ -5218,13 +5260,15 @@ function ctHistoryHtml(list, canEdit, showTeacher) {
 }
 
 // ── 老師端 ──
-async function ctLoadMine() {
+async function ctLoadMine(force) {
+  if (!force && cacheFresh('ct')) return;
   const [ss, cs] = await Promise.all([
     getDocs(query(collection(db,'ctStudents'), where('teacherIds','array-contains',currentUser.id))),
     getDocs(query(collection(db,'contacts'),   where('teacherId','==',currentUser.id)))
   ]);
   ctStudents = ss.docs.map(d => ({_id:d.id, ...d.data()})).filter(s => s.active !== false);
   ctContacts = ctSortContacts(cs.docs.map(d => ({_id:d.id, ...d.data()})));
+  cacheMark('ct');
 }
 window.renderTeacherContacts = async function() {
   const mEl = document.getElementById('ctTeacherMonth');
@@ -5367,10 +5411,36 @@ window.ctExportMine = function(fmt) {
 };
 
 // ── 主管端 ──
-async function ctAdminLoad() {
-  const [ss, cs] = await Promise.all([getDocs(collection(db,'ctStudents')), getDocs(collection(db,'contacts'))]);
+// 主管端的 contacts 不整包撈：預設只撈最近 CT_ADMIN_PERIODS 期，選到更早的期別才補撈那段；「全部」才撈全部。
+const CT_ADMIN_PERIODS = 3;
+let ctLoadedFrom = null;     // 目前已載入的最早日期（null = 尚未載入；'' = 已載入全部）
+function ctDefaultLoadFrom() {
+  const [y, m] = ctPeriodYm(todayISO()).split('-').map(Number);
+  const d = new Date(y, m - 1 - (CT_ADMIN_PERIODS - 1), 1);
+  return ctPeriodBounds(`${d.getFullYear()}-${pad2(d.getMonth()+1)}`)[0];
+}
+// 確保 from（ISO 日期；'' = 全部）之後的紀錄都在記憶體裡；主管專用
+async function ctEnsureContactsFrom(from) {
+  if (ctLoadedFrom === '') return;                                    // 已有全部
+  if (ctLoadedFrom !== null && from && from >= ctLoadedFrom) return;  // 已涵蓋
+  const q = from ? query(collection(db,'contacts'), where('date','>=',from)) : collection(db,'contacts');
+  const cs = await getDocs(q);
+  const byId = {}; ctContacts.forEach(c => byId[c._id] = c);
+  cs.docs.forEach(d => byId[d.id] = {_id:d.id, ...d.data()});
+  // 旗標紀錄不限期間，一律帶上
+  try {
+    const fl = await getDocs(query(collection(db,'contacts'), where('flag','==',true)));
+    fl.docs.forEach(d => { if (!byId[d.id]) byId[d.id] = {_id:d.id, ...d.data()}; });
+  } catch(e) { console.error('flag query:', e); }
+  ctContacts = ctSortContacts(Object.values(byId));
+  ctLoadedFrom = from;
+}
+async function ctAdminLoad(force) {
+  const ss = await getDocs(collection(db,'ctStudents'));
   ctStudents = ss.docs.map(d => ({_id:d.id, ...d.data()})).sort((a,b) => (a.sourceClasses?.[0]||'').localeCompare(b.sourceClasses?.[0]||'') || a.name.localeCompare(b.name));
-  ctContacts = ctSortContacts(cs.docs.map(d => ({_id:d.id, ...d.data()})));
+  const keep = ctLoadedFrom;             // 重新撈目前已載入的範圍（寫入後要看到最新）
+  ctContacts = []; ctLoadedFrom = null;
+  await ctEnsureContactsFrom(keep === null ? ctDefaultLoadFrom() : keep);
 }
 window.renderAdminContacts = async function() {
   showLoading('載入電訪資料...');
@@ -5395,7 +5465,7 @@ window.ctAdminSwitch = function(sec, el) {
     if (!mEl.dataset.init) { mEl.dataset.init = '1'; mEl.value = ctPeriodYm(todayISO()); ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo'); }
     ctAdminRenderRecords();
   }
-  if (sec === 'import')  ctRenderImportPreview();
+  if (sec === 'import')  { ctRenderImportPreview(); ctRenderSnapshots(); }
 };
 
 // 未填回報：每個（老師 × 學生）配對在期間內是否至少有一筆電訪
@@ -5645,6 +5715,8 @@ window.ctAdminRenderRecords = function() {
   const list = ctRecordsFiltered();
   const box = document.getElementById('ctRecordsOut');
   document.getElementById('ctRecCount').textContent = `${list.length} 筆`;
+  const hint = document.getElementById('ctRecLoadedHint');
+  if (hint) hint.textContent = ctLoadedFrom === '' ? '（已載入全部紀錄）' : ctLoadedFrom ? `（目前載入 ${ctLoadedFrom} 之後；更早的請選月份或按「全部」）` : '';
   if (!list.length) { box.innerHTML = '<div class="empty"><div class="empty-icon">📞</div><div>沒有符合的電訪紀錄</div></div>'; return; }
   // 依月份分段（紀錄已依日期新→舊排序）
   const byMonth = {};
@@ -5849,6 +5921,51 @@ function ctDropClass(s, className) {
   if (!sourceClasses.length) patch.active = false;
   return patch;
 }
+// ── 名冊快照（匯入前自動存，保留最近 CT_SNAPSHOT_KEEP 份）──
+const CT_SNAPSHOT_KEEP = 3;
+async function ctSaveSnapshot(label) {
+  const students = ctStudents.map(s => ({ ...s }));
+  await addDoc(collection(db,'ctSnapshots'), { label, createdAt:Date.now(), createdBy:currentUser.id, count:students.length, students });
+  const snap = await getDocs(collection(db,'ctSnapshots'));
+  const all = snap.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+  for (const old of all.slice(CT_SNAPSHOT_KEEP)) await deleteDoc(doc(db,'ctSnapshots',old._id));
+}
+window.ctRenderSnapshots = async function() {
+  const box = document.getElementById('ctSnapshotList'); if (!box) return;
+  try {
+    const snap = await getDocs(collection(db,'ctSnapshots'));
+    const all = snap.docs.map(d => ({ _id:d.id, label:d.data().label, createdAt:d.data().createdAt, count:d.data().count })).sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+    box.innerHTML = all.length ? all.map(x => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border);font-size:12px">
+        <span>${esc(new Date(x.createdAt).toLocaleString('zh-TW'))}　${esc(x.label||'')}　<span style="color:var(--muted)">${x.count} 位</span></span>
+        <button class="btn btn-ghost btn-sm" onclick="ctRestoreSnapshot('${x._id}')">↩ 還原到這份</button>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">尚無快照（第一次匯入時會自動建立）</div>';
+  } catch(e) { box.innerHTML = `<div style="font-size:12px;color:var(--red)">❌ ${esc(authErrMsg(e))}（規則可能尚未更新）</div>`; }
+};
+// 還原：快照裡的學生整筆寫回；快照之後才新增、且沒有電訪紀錄的學生會刪除
+window.ctRestoreSnapshot = async function(id) {
+  const ds = await getDoc(doc(db,'ctSnapshots',id)); if (!ds.exists()) return;
+  const snapData = ds.data();
+  if (!confirm(`還原名冊到「${new Date(snapData.createdAt).toLocaleString('zh-TW')}」的狀態（${snapData.count} 位）？\n這之後匯入的新學生若沒有電訪紀錄會被刪除；電訪紀錄本身不受影響。`)) return;
+  showLoading('還原中...');
+  try {
+    await ctSaveSnapshot('還原前');
+    const ids = new Set();
+    for (const st of snapData.students) {
+      const { _id, ...data } = st; ids.add(_id);
+      await setDoc(doc(db,'ctStudents',_id), data);
+    }
+    let removed = 0;
+    for (const s of ctStudents.filter(x => !ids.has(x._id))) {
+      const n = (await getDocs(query(collection(db,'contacts'), where('studentId','==',s._id)))).size;
+      if (!n) { await deleteDoc(doc(db,'ctStudents',s._id)); removed++; }
+    }
+    showToast(`↩ 已還原 ${snapData.count} 位${removed?`，刪除 ${removed} 位快照後新增的學生`:''}`);
+    await ctAdminLoad(); ctAdminSwitch('pairs');
+  } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
+  hideLoading();
+};
+
 window.ctRunImport = async function() {
   const replace = document.getElementById('ctImportReplace').checked;
   const pages = ctImportPages.map(p => ({ ...p, students:p.students.filter(s => s.include && s.name) })).filter(p => p.students.length);
@@ -5858,6 +5975,10 @@ window.ctRunImport = async function() {
   showLoading('匯入名冊...');
   let created = 0, merged = 0, dropped = 0;
   try {
+    // 匯入前先存一份名冊快照，匯錯了可以一鍵還原
+    document.getElementById('loadingText').textContent = '儲存名冊快照...';
+    await ctSaveSnapshot(`匯入前（${replace?'以新表為準':'只新增'}：${pages.map(p => p.className||'未命名').join('、').slice(0,60)}）`);
+    document.getElementById('loadingText').textContent = '匯入名冊...';
     // 以新表為準：先把整批匯入完成，再以「班別」為單位判斷誰不在表上（同一班可能分多頁／多張表）
     const onSheet = {};   // { className: Set(studentId) }
     const sheetTeacher = {};
@@ -6082,7 +6203,7 @@ window.ctRunImport = async function() {
           <div class="card-title">指定期間：每個「老師 × 學生」配對至少要有一筆電訪</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:10px">電訪週期：每月 11 日起算、次月 10 日截止（例：10 月份 = 10/11～11/10）。選月份會自動帶入該期起迄。</div>
           <div class="field-row">
-            <div><label class="field-label">開始日期</label><input class="field-input" type="date" id="ctMissFrom" onchange="document.getElementById('ctMissMonth').value='';ctRenderMissing()"></div>
+            <div><label class="field-label">開始日期</label><input class="field-input" type="date" id="ctMissFrom" onchange="document.getElementById('ctMissMonth').value='';ctRunWithRange(this.value,ctRenderMissing)"></div>
             <div><label class="field-label">結束日期</label><input class="field-input" type="date" id="ctMissTo" onchange="document.getElementById('ctMissMonth').value='';ctRenderMissing()"></div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
@@ -6126,7 +6247,7 @@ window.ctRunImport = async function() {
 
       <div id="ct-sec-records" style="display:none">
         <div class="card">
-          <div class="card-title">📋 電訪紀錄 <span id="ctRecCount" style="color:var(--muted);font-size:12px;font-weight:400"></span></div>
+          <div class="card-title">📋 電訪紀錄 <span id="ctRecCount" style="color:var(--muted);font-size:12px;font-weight:400"></span> <span id="ctRecLoadedHint" style="color:var(--muted);font-size:11px;font-weight:400"></span></div>
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
             <button class="btn btn-ghost btn-sm" onclick="ctShiftMonth('ctRecMonth',-1,'ctRecFrom','ctRecTo',ctAdminRenderRecords)">◀</button>
             <input class="field-input" type="month" id="ctRecMonth" onchange="ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo',ctAdminRenderRecords)" style="flex:1;text-align:center">
@@ -6136,7 +6257,7 @@ window.ctRunImport = async function() {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <select class="select-input" id="ctRecTeacher" onchange="ctAdminRenderRecords()"></select>
             <input class="field-input" id="ctRecSearch" placeholder="搜尋學生或內容" oninput="ctAdminRenderRecords()">
-            <input class="field-input" type="date" id="ctRecFrom" onchange="document.getElementById('ctRecMonth').value='';ctAdminRenderRecords()">
+            <input class="field-input" type="date" id="ctRecFrom" onchange="document.getElementById('ctRecMonth').value='';ctRunWithRange(this.value,ctAdminRenderRecords)">
             <input class="field-input" type="date" id="ctRecTo" onchange="document.getElementById('ctRecMonth').value='';ctAdminRenderRecords()">
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -6166,6 +6287,13 @@ window.ctRunImport = async function() {
             <textarea class="field-input" id="ctImportTextArea" rows="5" placeholder="吳冠誼 0986396505 0989992551&#10;卓泰合 0921555913" style="resize:vertical;font-family:inherit"></textarea>
             <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="ctImportText()">解析文字</button>
           </div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div class="card-title" style="margin-bottom:0">↩ 名冊快照</div>
+            <span style="font-size:11px;color:var(--muted)">每次匯入前自動保存，保留最近 3 份；匯錯了可還原</span>
+          </div>
+          <div id="ctSnapshotList" style="margin-top:6px"></div>
         </div>
         <div id="ctImportPreview"></div>
         <div id="ctImportActions" style="display:none;gap:10px;margin-top:4px">
