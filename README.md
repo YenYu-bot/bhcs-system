@@ -24,7 +24,7 @@
 | `logins/{userId}` | `{ authEmail, uid }`，登入前查帳號用，規則只開單筆 get |
 | `admins/{uid}` | 備援主管帳號（真實 Email 建立），可在登入頁直接用 Email 登入、忘記密碼可收重設信 |
 
-- 老師／主管登入後可按「🔑 改密碼」。主管新增／重設／搬遷的老師帳號第一次登入會被強制改密碼（`teachers.mustChangePassword`）；帳號管理有「要求全部老師改密碼」。
+- 老師／主管登入後可按「🔑 改密碼」。主管新增／重設／搬遷的老師帳號登入時會「提醒」改密碼（`teachers.mustChangePassword`，不強迫，可稍後再說或不再提醒）；帳號管理有「提醒全部老師改密碼」。
 - 主管密碼忘了：用備援主管帳號（帳號管理 → 備援主管帳號）登入，或登入頁「忘記密碼？」寄重設信到該 Email。主要帳號 `admin@bhcs.local` 收不到信。
 - 主管「重設密碼」會為該老師換一個新的 Auth 使用者（前端無法改別人的密碼）；舊登入因失去 `teachers` 文件而失效。想清掉舊使用者可到 Firebase 主控台 Authentication 刪除。
 - 刪除老師只刪 `teachers` / `logins` 文件，Auth 使用者同樣失效。

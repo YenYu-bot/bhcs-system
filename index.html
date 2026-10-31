@@ -788,12 +788,19 @@ window.changeMyPassword = async function() {
   hideLoading();
 };
 
-// 強制改密碼：主管建立／重設／搬遷的帳號第一次登入時必須改掉初始密碼
+// 改密碼提醒（不強迫）：主管建立／重設／搬遷的帳號登入時提醒改掉初始密碼；
+// 「稍後再說」下次登入再提醒，「不再提醒」或改完密碼後就不再出現
 function showForcePasswordModal() {
   document.getElementById('forcePass1').value = document.getElementById('forcePass2').value = '';
   document.getElementById('forcePassModal').classList.add('show');
   setTimeout(() => document.getElementById('forcePass1').focus(), 50);
 }
+window.dismissPasswordReminder = async function(forever) {
+  document.getElementById('forcePassModal').classList.remove('show');
+  if (!forever) return;
+  try { await updateDoc(doc(db,'teachers',currentUser.uid), { mustChangePassword:false, updatedAt:Date.now() }); }
+  catch(e) { console.error(e); }
+};
 window.submitForcePassword = async function() {
   const p1 = document.getElementById('forcePass1').value, p2 = document.getElementById('forcePass2').value;
   if (p1.length < PASS_MIN) { showToast(`密碼至少 ${PASS_MIN} 碼`,'error'); return; }
@@ -3218,7 +3225,7 @@ function renderTeachers() {
     <div class="teacher-card">
       <div class="teacher-info">
         <div class="teacher-name-big">${t.name}</div>
-        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆${(t.aliases||[]).length?`　點名表姓名：${esc(t.aliases.join('、'))}`:''}${t.mustChangePassword?'　<span class="tag tag-yellow">待改密碼</span>':''}</div>
+        <div class="teacher-meta">帳號：${t.userId}　日誌：${allEntries.filter(e=>e.teacherId===t.userId).length} 筆${(t.aliases||[]).length?`　點名表姓名：${esc(t.aliases.join('、'))}`:''}${t.mustChangePassword?'　<span class="tag tag-yellow">登入會提醒改密碼</span>':''}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" title="點名表上印的姓名與帳號不同時，在這裡設定以便匯入時自動對應" onclick="setTeacherAliases('${t._id}')">🏷 點名表姓名</button>
@@ -3241,12 +3248,12 @@ async function provisionTeacher(userId, name, pass, authEmail) {
 
 // 要求所有老師下次登入時改密碼（給搬遷進來、還在用初始密碼的帳號用）
 window.requireAllPasswordChange = async function() {
-  if (!confirm(`要求全部 ${teachers.length} 位老師下次登入時必須改密碼？`)) return;
+  if (!confirm(`全部 ${teachers.length} 位老師下次登入時會看到「建議改密碼」的提醒（可按稍後再說或不再提醒）。確定？`)) return;
   showLoading('設定中...');
   try {
     for (const t of teachers) await updateDoc(doc(db,'teachers',t._id), { mustChangePassword:true, updatedAt:Date.now() });
     teachers.forEach(t => t.mustChangePassword = true);
-    renderTeachers(); showToast('✅ 已設定，老師下次登入會被要求改密碼');
+    renderTeachers(); showToast('✅ 已設定，老師下次登入會看到提醒');
   } catch(e) { showToast('❌ '+authErrMsg(e),'error'); }
   hideLoading();
 };
@@ -6098,16 +6105,17 @@ window.ctRunImport = async function() {
   </div>
 </div>
 
-<!-- Force Password Change Modal（無法關閉） -->
+<!-- Password Reminder Modal（提醒，不強迫） -->
 <div class="modal-overlay" id="forcePassModal" style="z-index:300">
   <div class="modal">
-    <div class="modal-title">🔑 請先設定你的密碼</div>
-    <div class="modal-sub">你目前使用的是主管給的初始密碼，為了保護學生與家長資料，第一次登入必須改成自己的密碼。</div>
+    <div class="modal-title">🔑 建議改成自己的密碼</div>
+    <div class="modal-sub">你目前使用的是主管給的初始密碼。為了保護學生與家長資料，建議改成只有你知道的密碼；也可以之後再從右上角「🔑 改密碼」修改。</div>
     <input class="field-input" type="password" id="forcePass1" placeholder="新密碼（至少 6 碼）" style="margin-bottom:10px" autocomplete="new-password">
     <input class="field-input" type="password" id="forcePass2" placeholder="再輸入一次" style="margin-bottom:12px" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitForcePassword()">
     <div class="modal-actions">
-      <button class="btn btn-ghost" style="flex:1" onclick="logout();document.getElementById('forcePassModal').classList.remove('show')">登出</button>
-      <button class="btn btn-teal" style="flex:1;padding:10px" onclick="submitForcePassword()">設定密碼</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="dismissPasswordReminder(false)">稍後再說</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="dismissPasswordReminder(true)">不再提醒</button>
+      <button class="btn btn-teal" style="flex:1;padding:10px" onclick="submitForcePassword()">設定新密碼</button>
     </div>
   </div>
 </div>
@@ -6618,7 +6626,7 @@ window.ctRunImport = async function() {
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
         <div style="font-size:13px;font-weight:700;color:var(--muted);">👥 目前老師帳號（<span id="teacherCount">0</span> 位）</div>
-        <button class="btn btn-ghost btn-sm" title="全部老師下次登入時必須改密碼" onclick="requireAllPasswordChange()">🔑 要求全部老師改密碼</button>
+        <button class="btn btn-ghost btn-sm" title="全部老師下次登入時提醒改密碼（可略過）" onclick="requireAllPasswordChange()">🔑 提醒全部老師改密碼</button>
       </div>
       <div id="teacherList"></div>
 
