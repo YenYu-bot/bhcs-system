@@ -5449,12 +5449,20 @@ async function ctAdminLoad(force) {
   ctContacts = []; ctLoadedFrom = null;
   await ctEnsureContactsFrom(keep === null ? ctDefaultLoadFrom() : keep);
 }
+let ctPendingFlagged = false;
+// 點徽章：切到電訪管理 → 紀錄頁 → 只看待處理
+window.ctGoFlagged = function() {
+  ctPendingFlagged = true;
+  const tab = document.getElementById('adminTabContacts');
+  if (document.getElementById('admin-tab-contacts').style.display !== 'block') { adminSwitchTab('contacts', tab); return; }
+  ctAdminSwitch('records');
+};
 window.renderAdminContacts = async function() {
   showLoading('載入電訪資料...');
   try { await ctAdminLoad(); } catch(e) { showToast('❌ '+authErrMsg(e),'error'); console.error(e); }
   hideLoading();
   ctUpdateFlagBadge();
-  ctAdminSwitch(ctAdminSection);
+  ctAdminSwitch(ctPendingFlagged ? 'records' : ctAdminSection);
 };
 window.ctAdminSwitch = function(sec, el) {
   ctAdminSection = sec;
@@ -5468,6 +5476,7 @@ window.ctAdminSwitch = function(sec, el) {
   if (sec === 'pairs')   ctRenderPairs();
   if (sec === 'records') {
     ctPopulateRecordFilters();
+    if (ctPendingFlagged) { ctPendingFlagged = false; document.getElementById('ctRecFlagOnly').checked = true; }
     const mEl = document.getElementById('ctRecMonth');
     if (!mEl.dataset.init) { mEl.dataset.init = '1'; mEl.value = ctPeriodYm(todayISO()); ctApplyMonth('ctRecMonth','ctRecFrom','ctRecTo'); }
     ctAdminRenderRecords();
@@ -6193,7 +6202,7 @@ window.ctRunImport = async function() {
       <button class="tab" onclick="adminSwitchTab('classreport',this)">📊 班級報表</button>
       <button class="tab" onclick="adminSwitchTab('promote',this)">🎓 升班管理</button>
       <button class="tab" onclick="adminSwitchTab('tasks',this)">📸 任務派遣</button>
-      <button class="tab" onclick="adminSwitchTab('contacts',this)">📞 電訪管理 <span id="ctFlagBadge" class="tag tag-red" style="display:none;margin-left:4px"></span></button>
+      <button class="tab" id="adminTabContacts" onclick="adminSwitchTab('contacts',this)">📞 電訪管理 <span id="ctFlagBadge" class="tag tag-red" title="點一下直接看待處理事項" style="display:none;margin-left:4px;cursor:pointer" onclick="event.stopPropagation();ctGoFlagged()"></span></button>
       <button class="tab" onclick="adminSwitchTab('accounts',this)">⚙️ 帳號管理</button>
     </div>
 
