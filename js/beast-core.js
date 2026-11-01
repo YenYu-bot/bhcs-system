@@ -44,11 +44,8 @@ export const BEASTS = [
 export const BEAST_MAP = Object.fromEntries(BEASTS.map(b => [b.key, b]));
 
 // ── 道具（靈石購買）──
-// kind: item = 消耗品（items[key]++）、cosmetic = 外觀（cosmetics 陣列）、rename = 改名、swap = 洗髓丹、real = 現實獎勵（老師兌換）
+// kind: item = 消耗品（items[key]++）、rename = 改名、swap = 洗髓丹；外觀改由下方 DECO（裝扮）處理
 export const SHOP = [
-  { key: 'hat',      name: '靈獸飾品・仙帽',  kind: 'cosmetic', price: 10,  desc: '頭上戴一頂小仙帽' },
-  { key: 'cloud',    name: '靈獸飾品・坐騎雲', kind: 'cosmetic', price: 25,  desc: '腳下踩一朵祥雲' },
-  { key: 'bg',       name: '靈獸飾品・仙山背景', kind: 'cosmetic', price: 40, desc: '投影時顯示專屬仙山背景' },
   { key: 'rename',   name: '改名卡',          kind: 'rename',   price: 15,  desc: '幫靈獸取名字' },
   { key: 'dingxin',  name: '定心符',          kind: 'item',     price: 20,  desc: '個人免疫一次管家「受驚」' },
   { key: 'pojing',   name: '破境丹',          kind: 'item',     price: 30,  desc: '突破試煉失敗後當場重試，不用等一週' },
@@ -56,6 +53,56 @@ export const SHOP = [
   { key: 'xisui',    name: '洗髓丹',          kind: 'swap',     price: 150, desc: '免費換獸用完後，保留進度再換一次' },
 ];
 export const SHOP_MAP = Object.fromEntries(SHOP.map(s => [s.key, s]));
+
+// ── 裝扮（靈石購買、買了永久擁有，每類同時裝備一件；學生回家可在 QR 頁換裝，但只能換已擁有的）──
+// 全部是 CSS 效果（css/beasts.css 的 .d-<id>），不需要額外畫圖
+export const DECO_CATS = [
+  { key: 'dye',   name: '靈染', desc: '整隻變色（色違）' },
+  { key: 'aura',  name: '靈光', desc: '身後光暈' },
+  { key: 'stand', name: '台座', desc: '腳下台座' },
+  { key: 'frame', name: '卡框', desc: '卡片邊框' },
+  { key: 'bg',    name: '背景', desc: '卡片背景' },
+  { key: 'title', name: '稱號', desc: '名字下方的稱號' },
+];
+export const DECO = [
+  { id: 'dye-frost',    cat: 'dye',   name: '冰晶',   price: 120 },
+  { id: 'dye-shadow',   cat: 'dye',   name: '暗影',   price: 120 },
+  { id: 'dye-gold',     cat: 'dye',   name: '金曜',   price: 150 },
+  { id: 'dye-rainbow',  cat: 'dye',   name: '虹彩',   price: 180 },
+  { id: 'aura-jade',    cat: 'aura',  name: '翠光',   price: 40 },
+  { id: 'aura-violet',  cat: 'aura',  name: '紫霞',   price: 40 },
+  { id: 'aura-gold',    cat: 'aura',  name: '金輝',   price: 50 },
+  { id: 'aura-flame',   cat: 'aura',  name: '赤焰（脈動）', price: 70 },
+  { id: 'stand-cloud',  cat: 'stand', name: '祥雲',   price: 30 },
+  { id: 'stand-jade',   cat: 'stand', name: '玉台',   price: 30 },
+  { id: 'stand-lotus',  cat: 'stand', name: '蓮座',   price: 40 },
+  { id: 'stand-gold',   cat: 'stand', name: '金壇',   price: 50 },
+  { id: 'frame-bronze', cat: 'frame', name: '青銅',   price: 20 },
+  { id: 'frame-silver', cat: 'frame', name: '白銀',   price: 40 },
+  { id: 'frame-gold',   cat: 'frame', name: '黃金',   price: 70 },
+  { id: 'frame-rainbow',cat: 'frame', name: '流光',   price: 100 },
+  { id: 'bg-bamboo',    cat: 'bg',    name: '竹林',   price: 40 },
+  { id: 'bg-sea',       cat: 'bg',    name: '深海',   price: 40 },
+  { id: 'bg-sakura',    cat: 'bg',    name: '櫻花',   price: 40 },
+  { id: 'bg-night',     cat: 'bg',    name: '星空',   price: 50 },
+  { id: 'title-scholar',  cat: 'title', name: '小學霸', price: 15 },
+  { id: 'title-hero',     cat: 'title', name: '勇者',   price: 15 },
+  { id: 'title-guardian', cat: 'title', name: '守護者', price: 15 },
+  { id: 'title-owl',      cat: 'title', name: '夜貓子', price: 15 },
+  { id: 'title-genki',    cat: 'title', name: '元氣王', price: 15 },
+  { id: 'title-master',   cat: 'title', name: '靈獸大師', price: 30 },
+];
+export const DECO_MAP = Object.fromEntries(DECO.map(d => [d.id, d]));
+export function decoClasses(b) {
+  return Object.values(b.equip || {}).filter(id => DECO_MAP[id] && (b.decoOwned || []).includes(id)).map(id => 'd-' + id).join(' ')
+    + ((b.forge || 0) >= 5 ? ' forge-5' : '') + ((b.forge || 0) >= 10 ? ' forge-10' : '');
+}
+export function titleOf(b) { const id = (b.equip || {}).title; return id && (b.decoOwned || []).includes(id) ? DECO_MAP[id]?.name || '' : ''; }
+
+// ── 鍛體（增強）：0～10 級，越後面越貴；純展示（星數、5 級閃光、10 級「極」），不影響靈氣，避免用靈石買境界 ──
+export const FORGE_MAX = 10;
+export function forgeCost(lv) { return 20 + 10 * (lv | 0); }          // 0→1 要 20，9→10 要 110，全部 650
+export function forgeStars(lv) { lv = lv | 0; return lv >= FORGE_MAX ? '極' : lv ? '★'.repeat(Math.min(lv, 5)) + (lv > 5 ? `+${lv - 5}` : '') : ''; }
 
 // ── 預設設定（存於 beastConfig/main，主管可改；缺的欄位用這裡的預設）──
 export const DEFAULT_CONFIG = {
@@ -152,7 +199,7 @@ export function newBeast(name, beastKey, courseCount = 1, now = Date.now()) {
     realm: 1, pts: 0, stones: 0,
     weekKey: weekKey(now), weekPts: 0, weekStones: 0, weekBuys: {},
     courseCount, swapUsed: false, trials: {}, trialFailAt: {},
-    items: {}, cosmetics: [], julingActive: false, hall: false,
+    items: {}, decoOwned: [], equip: {}, forge: 0, julingActive: false, hall: false,
     createdAt: now, updatedAt: now,
   };
 }

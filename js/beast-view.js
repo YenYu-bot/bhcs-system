@@ -1,8 +1,8 @@
 // 百宏文教 · 百宏靈獸 — 學生 QR 檢視頁（無登入、唯讀）
 // beast.html?t=<token>；token = beasts/{token} 的文件 id，規則只開 get、不開列舉。
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
-import { REALMS, STAGE_NAMES, BEAST_MAP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig, realmInfo, nextRealm, progress, trialPending, capWeekPts, capWeekStones, multiplier, rollWeek, stageOf, imgSrc, imgFallback, fmtTs } from "./beast-core.js";
+import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+import { REALMS, STAGE_NAMES, BEAST_MAP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig, realmInfo, nextRealm, progress, trialPending, capWeekPts, capWeekStones, multiplier, rollWeek, stageOf, imgSrc, imgFallback, fmtTs, DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, forgeStars, FORGE_MAX } from "./beast-core.js";
 
 const app = initializeApp({
   apiKey: "AIzaSyA4l5zcyEVzbLfpeCbDvDjQsw2Rfkfizao", authDomain: "bhcs-system.firebaseapp.com", projectId: "bhcs-system",
@@ -12,7 +12,7 @@ const db = getFirestore(app);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const view = document.getElementById('view');
 const token = new URLSearchParams(location.search).get('t');
-let cfg = mergeConfig(null), logs = [];
+let cfg = mergeConfig(null), logs = [], cur = null;
 
 async function main() {
   if (!token) { view.innerHTML = '<div class="empty">連結不完整，請掃描聯絡簿上的 QR Code。</div>'; return; }
@@ -20,7 +20,7 @@ async function main() {
   try { const c = await getDoc(doc(db, 'beastConfig', 'main')); if (c.exists()) { cfg = mergeConfig(c.data()); if (cfg.thresholds) REALMS.forEach((r, i) => r.pts = cfg.thresholds[i]); } } catch (e) { }
   onSnapshot(doc(db, 'beasts', token), snap => {
     if (!snap.exists()) { view.innerHTML = '<div class="empty">找不到這隻靈獸，請向老師確認連結。</div>'; return; }
-    render(snap.data());
+    cur = snap.data(); render(cur);
   }, e => { console.error(e); view.innerHTML = `<div class="empty">讀取失敗：${esc(e.message)}</div>`; });
   onSnapshot(query(collection(db, 'beasts', token, 'log'), orderBy('ts', 'desc'), limit(30)), s => { logs = s.docs.map(d => d.data()); const el = document.getElementById('logs'); if (el) el.innerHTML = logsHtml(); }, () => { });
 }
@@ -35,12 +35,12 @@ function render(b) {
   const wk = rollWeek(b); const wp = wk.weekPts ?? b.weekPts ?? 0, ws = wk.weekStones ?? b.weekStones ?? 0;
   const skillLv = [2, 4, 7, 10];
   const items = Object.entries(b.items || {}).filter(([, n]) => n > 0).map(([k, n]) => `<span>${SHOP_MAP[k]?.name || k} ×${n}</span>`);
-  const cos = (b.cosmetics || []).map(k => `<span>${SHOP_MAP[k]?.name.replace('靈獸飾品・', '') || k}</span>`);
   if (b.julingActive) items.push('<span>聚靈丹 生效中</span>');
   view.innerHTML = `
-    <div class="sv-hero stage-${r.stage}" style="--c:${info.color}">
-      <img class="beast-img" src="${imgSrc(b.beast, stageOf(b.realm))}" onerror="this.onerror=null;this.src='${imgFallback(b.beast, stageOf(b.realm))}'" alt="${info.name}">
-      <div class="sv-name">${esc(b.petName || info.name)}</div>
+    <div class="sv-hero beast-card stage-${r.stage} ${decoClasses(b)}" style="--c:${info.color};cursor:default">
+      ${forgeStars(b.forge) ? `<span class="forge-stars" style="font-size:16px">${forgeStars(b.forge)}</span>` : ''}
+      <div class="beast-art" style="width:70%;max-width:260px;margin:0 auto"><img class="beast-img" src="${imgSrc(b.beast, stageOf(b.realm))}" onerror="this.onerror=null;this.src='${imgFallback(b.beast, stageOf(b.realm))}'" alt="${info.name}"></div>
+      <div class="sv-name">${esc(b.petName || info.name)}</div>${titleOf(b) ? `<div class="beast-title" style="font-size:12px">${esc(titleOf(b))}</div>` : ''}
       <div class="sv-pet">${esc(b.name)} 的本命靈獸 · ${STAGE_NAMES[r.stage]}${info.name} · ${info.attr}</div>
       <div class="sv-realm">第 ${b.realm} 境 ${r.name}${trialPending(b) ? ' · 待突破試煉' : ''}</div>
     </div>
@@ -56,9 +56,28 @@ function render(b) {
       ${info.skills.map((s, i) => `<div class="skill ${b.realm >= skillLv[i] ? '' : 'locked'}">${b.realm >= skillLv[i] ? '⚔️' : '🔒'} 第${['一', '二', '三', '四'][i]}式「${s}」<span class="hint" style="margin:0 0 0 auto">${realmInfo(skillLv[i]).name}解鎖</span></div>`).join('')}
       <div class="skill ${b.realm >= 12 ? '' : 'locked'}">${b.realm >= 12 ? '🌟' : '🔒'} 本命神通「${info.ultimate}」<span class="hint" style="margin:0 0 0 auto">大羅金仙</span></div>
     </div>
-    <div class="card"><div class="card-title">道具與飾品</div><div class="sv-items">${[...items, ...cos].join('') || '<span class="hint" style="margin:0">還沒有道具，完成老師的任務賺靈石，到補習班跟老師買。</span>'}</div>
+    <div class="card"><div class="card-title">道具</div><div class="sv-items">${[...items, ...((b.forge || 0) ? [`<span>鍛體 Lv.${b.forge}/${FORGE_MAX}</span>`] : [])].join('') || '<span class="hint" style="margin:0">還沒有道具，完成老師的任務賺靈石，到補習班跟老師買。</span>'}</div>
       <div class="hint">本週靈石入帳 ${ws}/${capWeekStones(b.courseCount, cfg)} · ${b.courseCount} 門課 ×${multiplier(b.courseCount, cfg)}</div></div>
+    ${wardrobeHtml(b)}
     <div class="card"><div class="card-title">最近紀錄</div><div class="log-list" id="logs">${logsHtml()}</div></div>
-    <div class="sv-foot">百宏文教 · 百宏靈獸<br>這一頁只能看，加分、購買請在補習班由老師操作。</div>`;
+    <div class="sv-foot">百宏文教 · 百宏靈獸<br>加分、購買請在補習班由老師操作；衣櫃裡已擁有的裝扮可以自己換。</div>`;
 }
+// 我的衣櫃：只能換「已擁有」的裝扮（規則只允許改 equip 欄位，且值必須在 decoOwned 裡）；購買仍要到補習班
+function wardrobeHtml(b) {
+  const owned = b.decoOwned || [], equip = b.equip || {};
+  if (!owned.length) return '<div class="card"><div class="card-title">我的衣櫃</div><div class="hint" style="margin:0">還沒有裝扮。用靈石在補習班跟老師買，買了之後可以在這裡自己換裝。</div></div>';
+  return `<div class="card"><div class="card-title">我的衣櫃 <span class="hint" style="display:inline;margin:0 0 0 6px">點一下換裝，再點一次卸下</span></div>${DECO_CATS.map(c => {
+    const mine = DECO.filter(d => d.cat === c.key && owned.includes(d.id)); if (!mine.length) return '';
+    return `<div class="deco-cat"><div class="deco-cat-title">${c.name}</div><div class="deco-row">${mine.map(d => {
+      const on = equip[c.key] === d.id;
+      return `<button class="deco-chip owned ${on ? 'on' : ''}" onclick="wear('${c.key}','${on ? '' : d.id}')">${esc(d.name)}${on ? ' ✓' : ''}</button>`;
+    }).join('')}</div></div>`;
+  }).join('')}</div>`;
+}
+window.wear = async function (cat, id) {
+  if (!cur) return;
+  const equip = { ...(cur.equip || {}) }; if (id) equip[cat] = id; else delete equip[cat];
+  try { await updateDoc(doc(db, 'beasts', token), { equip, updatedAt: Date.now() }); }
+  catch (e) { console.error(e); alert('換裝失敗，請稍後再試'); }
+};
 main();

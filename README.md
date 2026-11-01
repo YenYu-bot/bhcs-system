@@ -64,7 +64,7 @@
 | 集合 | 內容 |
 |---|---|
 | `beastConfig/main` | 主管設定：加分原因、扣分原因、上限、倍率、道具價格、現實獎勵、管家預設、境界門檻。缺的欄位用 `DEFAULT_CONFIG` |
-| `beasts/{token}` | 一個學生一隻（以姓名 `nameKey` 跨班共用）：`beast, petName, realm, pts, stones, weekKey, weekPts, weekStones, weekBuys, courseCount, swapUsed, trials{lv:true}, trialFailAt{lv:ts}, items{}, cosmetics[], julingActive, hall`。`token` 同時是 QR 連結鑰匙，規則只開 `get` 不開列舉 |
+| `beasts/{token}` | 一個學生一隻（以姓名 `nameKey` 跨班共用）：`beast, petName, realm, pts, stones, weekKey, weekPts, weekStones, weekBuys, courseCount, swapUsed, trials{lv:true}, trialFailAt{lv:ts}, items{}, decoOwned[], equip{cat:id}, forge, julingActive, hall`。`token` 同時是 QR 連結鑰匙，規則只開 `get` 不開列舉 |
 | `beasts/{token}/log/{id}` | `{ ts, type, delta, stones, reason, by, byName, classId, className, undone }`；`type` = new／pts／penalty／stones／buy／item／trial／swap／goal／realm／undo |
 | `beastTasks/{id}` | 任務：`{ title, stones, kind(once/daily/weekly), scope(class/students), students[], deadline, classId, teacherId, awarded{nameKey:[key]} }` |
 | `beastClass/{classId}` | `goal{text, weekKey, doneWeek, blockedWeek}`、`issued{weekKey, total}`（本週靈石發放額）、`steward{on, strikes, lastStrikeAt, scaredUntil, scaredLevel, paused}`、`stats{YYYY-MM:{ptsIssued, stonesIssued, stonesSpent, penaltyPts, penaltyStones}}`（報表直接讀，不用 collectionGroup 索引） |
@@ -76,6 +76,7 @@
 - 境界只升不降；老師扣靈氣最多扣到當前境界門檻。第 4／7／10／12 境要老師在學生面板按「試煉通過」，失敗冷卻 7 天（破境丹可當場重試）。
 - 靈石只能從任務拿（單一任務 ≤ 20；每班每週總額 = 人數 × 30），只能在補習班由老師操作購買。聚靈丹每週限購 1 顆。
 - 管家：麥克風只算音量不錄音；同節課第 1 次超標警告、第 2 次全班「受驚」10 分鐘（中級：加分減半、無條件進位；重級：再取消本週全班目標）；安靜 10 分鐘歸零。管家只在開啟它的那台裝置偵測，狀態寫 `beastClass` 讓投影／手機同步。
+- 裝扮與鍛體：`DECO`（靈染、靈光、台座、卡框、背景、稱號，共 26 件，全是 CSS 效果）買了永久擁有、每類裝備一件，學生可在 QR 頁衣櫃自己換已擁有的（規則只允許未登入者改 `equip`，且值須在 `decoOwned` 內）；鍛體 0～10 級（20→110 靈石，共 650），純展示不影響靈氣，是靈石的長期出口。
 - 撤銷：當天內、自己的紀錄（主管可撤所有人）；只有 pts／penalty／stones／goal 可撤。
 
 **部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
