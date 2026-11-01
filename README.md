@@ -80,7 +80,7 @@
 
 **部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
 
-**圖片檔名**（共 119 張；v2 重繪中，目前全是 SVG 佔位圖。ChatGPT 產出的分格圖存成 `01-qinglong.png`…`12-bastet.png`、`s01-qinglong.png`…（受驚）、`13-badges.png`、`14-steward.png`、`15-items.png` 放進 `assets/beasts-src/v2/` 再跑切圖工具）：
+**圖片檔名**（共 119 張，v2 已全部到位。ChatGPT 產出的分格圖存成 `01-qinglong.png`…`12-bastet.png`、`s01-qinglong.png`…（受驚）、`13-badges.png`、`14-steward.png`、`15-items.png` 放進 `assets/beasts-src/v2/` 再跑切圖工具）：
 
 | 檔名 | 張數 | 說明 |
 |---|---|---|
