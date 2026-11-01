@@ -57,7 +57,8 @@
 | `js/beasts.js` | 老師端：課堂加分、懲罰、試煉、商店、換獸、任務與靈石、全班目標、護山管家、投影模式、主管設定／報表、名人堂 |
 | `js/beast-view.js` | 學生頁 |
 | `js/vendor/qr.js` | 自寫 QR 產生器（版本 1–6，夠放學生連結） |
-| `assets/beasts/` | 圖片。`*.png` 由 ChatGPT 產生；沒有 PNG 時自動用同名 `*.svg` 佔位圖（`python3 tools/make-beast-placeholders.py` 重新產生） |
+| `assets/beasts/` | 系統用圖：512×512 透明 PNG（256 色量化，每張約 50–100 KB）。找不到 PNG 時自動用同名 `*.svg` 佔位圖（`python3 tools/make-beast-placeholders.py` 重新產生） |
+| `assets/beasts-src/` | ChatGPT 產出的白底設定圖原稿（15 張）＋生成 prompt。改圖後執行 `python3 tools/split-beast-sheets.py assets/beasts-src` 重新去背、切圖、量化 |
 
 | 集合 | 內容 |
 |---|---|
@@ -76,9 +77,9 @@
 - 管家：麥克風只算音量不錄音；同節課第 1 次超標警告、第 2 次全班「受驚」10 分鐘（中級：加分減半、無條件進位；重級：再取消本週全班目標）；安靜 10 分鐘歸零。管家只在開啟它的那台裝置偵測，狀態寫 `beastClass` 讓投影／手機同步。
 - 撤銷：當天內、自己的紀錄（主管可撤所有人）；只有 pts／penalty／stones／goal 可撤。
 
-**部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 圖片放 `assets/beasts/`（下表）；(3) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
+**部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
 
-**圖片檔名**（1024×1024、透明背景 PNG，共 71 張；ChatGPT prompt 在設定文件最後一節）：
+**圖片檔名**（共 71 張，已全部到位；要換圖就把新的設定圖放進 `assets/beasts-src/`（檔名開頭 `01-`～`15-`）再跑切圖工具）：
 
 | 檔名 | 張數 | 說明 |
 |---|---|---|
