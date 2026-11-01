@@ -24,7 +24,7 @@ const fs = require('fs');
 
   // 新增電訪 + 旗標
   await page.locator('#ctTeacherList .card', { hasText: '乙' }).locator('text=＋ 新增電訪').click(); await page.waitForTimeout(200);
-  eq(await page.inputValue('#ctfDate'), new Date().toISOString().slice(0, 10), 'date default today');
+  eq(await page.inputValue('#ctfDate'), await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }), 'date default today');   // 用瀏覽器的本地日期比，跨 UTC 午夜才不會誤判
   await page.fill('#ctfContent', '家長反映作業太多'); await page.check('#ctfFlag');
   await page.click('#ctModal >> text=☁️ 儲存'); await page.waitForTimeout(300);
   includes(await toast(), '電訪已儲存');

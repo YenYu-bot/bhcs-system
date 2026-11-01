@@ -1,0 +1,201 @@
+﻿file,category,name_zh,state,stage_or_index,width,height,mode,alpha_range,zip,sha256
+sheets/01-qinglong.png,sheets,青龍,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-1.zip,f556192195e34c3995102f630d0f01ec41c27e4f5ad35b51e89e840641b753a9
+sprites/01-qinglong-stage-1.png,sprites,青龍,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,97a98c70e7a23d8fef91aa1fd3f4b54e0757a1332a97cc77ef634d25b279a09b
+sprites/01-qinglong-stage-2.png,sprites,青龍,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,e5c9eef6602ede53a62446f93efa2da061bc425f303b215e50d1c51b14b9d9df
+sprites/01-qinglong-stage-3.png,sprites,青龍,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,1f479dafe29a154752c27744d9b75939193da3ed8a9be7bd205e2dc68786b847
+sprites/01-qinglong-stage-4.png,sprites,青龍,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,e329c2a61aa9562e2f64b5863ca8334c3efd3ad2d1d054f0c4dd1effb684b051
+previews/01-qinglong-sheet.png,previews,青龍,一般,四階,1536,1024,RGB,,beasts-v2-part-1.zip,b30c5f4958b82845b21159bb2cdf71864603498e22ca656d748b3ad335fa8d9f
+previews/01-qinglong-ui.png,previews,青龍,一般,四階,760,500,RGB,,beasts-v2-part-1.zip,9fc8b50b6e2c480867447ce57f9c5da198645fe1357c26abadbd651138aa5446
+sheets/02-zhuque.png,sheets,朱雀,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-1.zip,6055637c4bc9df772707e78224805c20c373b2a5a8d5c6179a1cd6f1342fd881
+sprites/02-zhuque-stage-1.png,sprites,朱雀,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,9539fa537b8a7dc442ab0b83cc1fa507de9e13f8725eb6874bb52e41dde560bc
+sprites/02-zhuque-stage-2.png,sprites,朱雀,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,951eae5da5557baf5ab368b9c4f728cef25e1cdd14065b1ed437e88db6935b2b
+sprites/02-zhuque-stage-3.png,sprites,朱雀,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,8ae735c9ac196dd8d246d5393c8edbe84b4796b159a021545738fc6152125b75
+sprites/02-zhuque-stage-4.png,sprites,朱雀,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,bbe457779561832ce967513d9a40013eaa1c0f3d2cfdf436e41318e4bd496c5c
+previews/02-zhuque-sheet.png,previews,朱雀,一般,四階,1536,1024,RGB,,beasts-v2-part-1.zip,5a6508e2de01785f68c7c2062139adff4701ed70f4f76db89974023c33e2fe7f
+previews/02-zhuque-ui.png,previews,朱雀,一般,四階,760,500,RGB,,beasts-v2-part-1.zip,d1ea9e94add0f318701eb44a5ee7674dbe0368903f35fb72cb337e3856323862
+sheets/03-qilin.png,sheets,麒麟,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-1.zip,5b7f9b83a00b1aee77720c78c854a80a958eddfd7d1805d9b1c6347317c1a3dc
+sprites/03-qilin-stage-1.png,sprites,麒麟,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,96b990cf556ab76e4ffc3572612e58c3b6cb6cc10bd16335a5d4c214893d2c9a
+sprites/03-qilin-stage-2.png,sprites,麒麟,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,65ecb23bbe4bed32b90fec03ecb4db54a683608f3b7bcbaedaf855a04a424095
+sprites/03-qilin-stage-3.png,sprites,麒麟,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,5427e5dde71c0c3196cab00708a6717b97fcffb9df6f552ec8b54ca6d1624ff9
+sprites/03-qilin-stage-4.png,sprites,麒麟,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,347f64317c1a44c97218c5bdbba490900c94d21fab3ea86513130155bbfc7c0c
+previews/03-qilin-sheet.png,previews,麒麟,一般,四階,1536,1024,RGB,,beasts-v2-part-1.zip,6f639a9b98350f076c75f73e93b98e58397effb6a4486f1176c452710397e341
+previews/03-qilin-ui.png,previews,麒麟,一般,四階,760,500,RGB,,beasts-v2-part-1.zip,2f510a04426965bf3efca6ac7410cf8f6ba85a68ee318c2dc2ee3488323e249a
+sheets/04-kitsune.png,sheets,九尾狐,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-1.zip,4044596d575d9b5739ad6c5bc360de090b0a6467b1907fc7b547712d3acb90a0
+sprites/04-kitsune-stage-1.png,sprites,九尾狐,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,dda1469908fda1e7443b291acca3513764c9b54d86b4c272af21b772c23514cc
+sprites/04-kitsune-stage-2.png,sprites,九尾狐,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,ea7bd7658f94137d9712762c2318cca64b9c0defe4040f3aed8346bb83c51e52
+sprites/04-kitsune-stage-3.png,sprites,九尾狐,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,5f2f25a0e5fd79e987618507f27f45581c5c7d5a04668716c6e24bd09011549e
+sprites/04-kitsune-stage-4.png,sprites,九尾狐,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-1.zip,aa2b434fd66bcdb6875224c575aee3a15950e26713478d1ea16ca8a095755f00
+previews/04-kitsune-sheet.png,previews,九尾狐,一般,四階,1536,1024,RGB,,beasts-v2-part-1.zip,2a8a488b1700a221f05f30be936b007d3a0a2b7fd0dbb494c984b6bc36d21d41
+previews/04-kitsune-ui.png,previews,九尾狐,一般,四階,760,500,RGB,,beasts-v2-part-1.zip,f767671e1b1afe93b2d4eb6c1da7f9d23314160621a9cef98e6be3534bb0c7d1
+sheets/05-orochi.png,sheets,八岐大蛇,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-2.zip,5d72ad8478339cb1538bbced61fa96c948453ec57c8e4017eda777536c091f86
+sprites/05-orochi-stage-1.png,sprites,八岐大蛇,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,c39f22aff97669923764f61488ccb4b1c72f6bad87a937bae6ad20f21c22f3c3
+sprites/05-orochi-stage-2.png,sprites,八岐大蛇,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,b58cc1140b7afd1fd9c6bb497b1b8681b1bd00828a05a61ed7306f43ca6206aa
+sprites/05-orochi-stage-3.png,sprites,八岐大蛇,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,18826b376d9dac80711c05e4c80d3792211933769913a61d9bb3a08a3a8f9a64
+sprites/05-orochi-stage-4.png,sprites,八岐大蛇,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,36e14fc24796571bba08b9ed1487643c181fa9b8778478ae6396853c74f53d37
+previews/05-orochi-sheet.png,previews,八岐大蛇,一般,四階,1536,1024,RGB,,beasts-v2-part-2.zip,aef8bd798b01fbf69eca101833100fe04b0a6607a9907e3ada9449fca4576173
+previews/05-orochi-ui.png,previews,八岐大蛇,一般,四階,760,500,RGB,,beasts-v2-part-2.zip,546b70ff41a9663b5f759a00f414eaa29edf55c5ebc40806c659db4089c4e654
+sheets/06-baku.png,sheets,夢貘,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-2.zip,00eda3fbf043d6048cff9bbd6caea9f3a0aafff3089639638a4f5007a068832d
+sprites/06-baku-stage-1.png,sprites,夢貘,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,672baf16631d3fa71cfdde475fe90a995ee1762dd087d966d6699df7d7c85d13
+sprites/06-baku-stage-2.png,sprites,夢貘,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,2aa8e56cfb2bdb060ecac390552a07b435776c221debc6b55d6e12f19e3ed04d
+sprites/06-baku-stage-3.png,sprites,夢貘,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,edd35bf6ac3561939c8da01f28c35fabb9ced0ec98e6c3e0f642c116597be838
+sprites/06-baku-stage-4.png,sprites,夢貘,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,c7d071e23beda0685190f2e75b8c2137f53fcdf2c8f8264cddb83952f483f7c2
+previews/06-baku-sheet.png,previews,夢貘,一般,四階,1536,1024,RGB,,beasts-v2-part-2.zip,bedc581c5653047575102018d8628491b31ee2bf72d73d2e9a61ba0d58872af0
+previews/06-baku-ui.png,previews,夢貘,一般,四階,760,500,RGB,,beasts-v2-part-2.zip,c75dd944ab8921efd7692343a648ddb9b4a3923e8dc56c7d14fbada49fd847d5
+sheets/07-angel.png,sheets,小天使,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-2.zip,1c7d4a8ee8d48b9fb715680ad106eb0cce051f65c927defb17c61be2508bde16
+sprites/07-angel-stage-1.png,sprites,小天使,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,38bb5e3884a8fe66523656da97f627d268b38313362a574c357522f793fb4d0e
+sprites/07-angel-stage-2.png,sprites,小天使,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,9f3526a378817009433666ed7ef0b025a7bbbbf6faa18e32cf97e72c6f1823a4
+sprites/07-angel-stage-3.png,sprites,小天使,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,ea10437f4f894aab4fa4e78b3bdc76a5081f1939580cc50cb2bd7e6a6768ee0a
+sprites/07-angel-stage-4.png,sprites,小天使,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,a0a69c060245834c8fbd3a18c3a86e83c8c796a9a3b5b1cff71ee3d3b267966a
+previews/07-angel-sheet.png,previews,小天使,一般,四階,1536,1024,RGB,,beasts-v2-part-2.zip,0f3a9ff70ad188ae6a991fe44addddbc3a0923d932e970b6c582133caef061dd
+previews/07-angel-ui.png,previews,小天使,一般,四階,760,500,RGB,,beasts-v2-part-2.zip,5fd74aec379c6e20147a2be11028b15c5e7c290e75aae1f07ed568281f79e782
+sheets/08-mermaid.png,sheets,人魚,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-2.zip,d66ddb8394fb2082d2d7ed69b0c58dc7697e9ba16e5290e0f9684f2267be5e80
+sprites/08-mermaid-stage-1.png,sprites,人魚,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,befc8f40aee2e62edb767c5864d5ab95d75be829eb6215d39b3acf10373ae0b3
+sprites/08-mermaid-stage-2.png,sprites,人魚,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,506e3318cfa5ba600d1248909b8f6f9046c3e4f8e76edc6d4f70e0a9dfd7bd75
+sprites/08-mermaid-stage-3.png,sprites,人魚,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,be7edb16e2e7b1abe5d13ff683319952f6bce2ae834e106ebb3ddce9bf2bd12a
+sprites/08-mermaid-stage-4.png,sprites,人魚,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-2.zip,78b550912b4097bc639a3e8f49931178481fce7e2226162fcff78d444ec2e2a1
+previews/08-mermaid-sheet.png,previews,人魚,一般,四階,1536,1024,RGB,,beasts-v2-part-2.zip,e956858f19848c94e4a6c76eb1f1223730152a2916ff636850220733aec757e3
+previews/08-mermaid-ui.png,previews,人魚,一般,四階,760,500,RGB,,beasts-v2-part-2.zip,7372e97fccb7a3caf58c4c46f2ec81f7750afddc7fd5f73238dd10058c4704e9
+sheets/09-unicorn.png,sheets,獨角獸,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-3.zip,f96e7898b0b45931d10b1e803bcc882f173e715906760fb66aa7dfdc6dcbde99
+sprites/09-unicorn-stage-1.png,sprites,獨角獸,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,409063d71f06b74ba861b2e710f0cad8dd3e41a522aacc49a6d5eb3444b06623
+sprites/09-unicorn-stage-2.png,sprites,獨角獸,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,f7b0bad026a4250ecbbed55b4ff4fd435c80ca3f8b1be1132627c818183d0a34
+sprites/09-unicorn-stage-3.png,sprites,獨角獸,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,972cf402912c9c0c28086bc1eb00b9eb243287a78835a2ad374ea16d84232aa9
+sprites/09-unicorn-stage-4.png,sprites,獨角獸,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,61f8a245826f2b63a3df1ed98b9191b60cb763735d11e518bb9271a9b2496939
+previews/09-unicorn-sheet.png,previews,獨角獸,一般,四階,1536,1024,RGB,,beasts-v2-part-3.zip,0bde5d44c52f7993aa520c0714f2aa22187fccd9e13bbe315c78a400c2017a5b
+previews/09-unicorn-ui.png,previews,獨角獸,一般,四階,760,500,RGB,,beasts-v2-part-3.zip,8397d03084eb1bf75c3b992f5505d1a98bfbba619b9ad998610c2ef7fe1658fd
+sheets/10-griffin.png,sheets,獅鷲,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-3.zip,5a77efe6510bd8afd97ff8d440f73ed15b042cebc3d18aa98901c84906775a45
+sprites/10-griffin-stage-1.png,sprites,獅鷲,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,17f1d990a89a689f6c5fa04fff67985dc8a92ce89a5018e23ad6f24591b96f84
+sprites/10-griffin-stage-2.png,sprites,獅鷲,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,f5b70ff0e5b35e95eeee110ad6fc840a23b55cd788fd203ee0e5835139ed27cf
+sprites/10-griffin-stage-3.png,sprites,獅鷲,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,dec5b8a303c038433b3e4e0f4f9b23e797ea15eeefcd82bd7e62cff2251aa2a8
+sprites/10-griffin-stage-4.png,sprites,獅鷲,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,5cfd92836d4c9e6c51efe014692eaa7bb2a87d2a4231545777f70dabd050c4cb
+previews/10-griffin-sheet.png,previews,獅鷲,一般,四階,1536,1024,RGB,,beasts-v2-part-3.zip,b79947fa1ace519a05a99989fc1776933b40dbd123168f49c770fb536326136b
+previews/10-griffin-ui.png,previews,獅鷲,一般,四階,760,500,RGB,,beasts-v2-part-3.zip,222048adbdae8d700b2cb6d317d2e481b119e05a07b1e342cfd5eea84f9b1e7f
+sheets/11-fenrir.png,sheets,芬里爾,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-3.zip,9632b95e893a94954553092ef5d8309901c2e5b9f5b790517dd893736e353364
+sprites/11-fenrir-stage-1.png,sprites,芬里爾,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,739608b0fd52ddc24a9eb3645f79cf28f86847b8e89c843f02c7317588d75a7a
+sprites/11-fenrir-stage-2.png,sprites,芬里爾,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,acdf6f4035b5d1105aab4ee1ad58f2c9707a11bb8d7dcc1f4a61f7d0bf417fe7
+sprites/11-fenrir-stage-3.png,sprites,芬里爾,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,0f5270dc9241cc7f0e9a6e52627d86c260adf40c87fa85512210c1ad60d5c560
+sprites/11-fenrir-stage-4.png,sprites,芬里爾,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,9cf29906589b6ebc3fff22001892bcce14e8f697229a59a5bbfee86cf7edeac3
+previews/11-fenrir-sheet.png,previews,芬里爾,一般,四階,1536,1024,RGB,,beasts-v2-part-3.zip,9a0120f3c12ba4c024882a150ef72063327b84e510cf1f0e2e2e1646f5d19f94
+previews/11-fenrir-ui.png,previews,芬里爾,一般,四階,760,500,RGB,,beasts-v2-part-3.zip,9df24cef724f9ba28ae4a1846873f5f3e0653df221e50aacb56a4855de8199d3
+sheets/12-bastet.png,sheets,巴斯特貓,一般,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-3.zip,138696620fd748a5f40e03cdf7ed0b3b43628590bab9940c2e64b02f27006196
+sprites/12-bastet-stage-1.png,sprites,巴斯特貓,一般,1,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,57f99d2a19763dc999c8f8bbdcd1934b8a6154f24326d7653fe285329b718f9b
+sprites/12-bastet-stage-2.png,sprites,巴斯特貓,一般,2,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,9fdba063ec9b64abda2130356bb44ae1b1cc8ac01c86b60a869a47131273d12d
+sprites/12-bastet-stage-3.png,sprites,巴斯特貓,一般,3,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,d73700beb88540bf1466fc7ca0f7ca4f8213c2001e121fdf4a3c6e4fab20b7cd
+sprites/12-bastet-stage-4.png,sprites,巴斯特貓,一般,4,512,512,RGBA,"(0, 255)",beasts-v2-part-3.zip,b8ea27f7b933ea55910dae33e4f101d46c5052067d6ca65ac9b5e93dc6eb25da
+previews/12-bastet-sheet.png,previews,巴斯特貓,一般,四階,1536,1024,RGB,,beasts-v2-part-3.zip,e2c16e96f2c382fc7df78a1a9b4f1b0d21fff25d94c3029ccd78af8bc3daca68
+previews/12-bastet-ui.png,previews,巴斯特貓,一般,四階,760,500,RGB,,beasts-v2-part-3.zip,77c6fcdbcc90439ed1554cddb9ab212798cc9e8189ef1cc80a1f04f64f09a657
+sheets/s01-qinglong.png,sheets,青龍,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-4.zip,a32fd2f38536a698f8cae3fa028c6ce3a0df77a4f2a428401c7077fd37eadafa
+sprites/s01-qinglong-stage-1.png,sprites,青龍,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,e8c07cb284b6f2c8f467ee0e266d0415518bd71402ac8b763e5fdaa5749b9220
+sprites/s01-qinglong-stage-2.png,sprites,青龍,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,00271e59e536527bc57e3ed2e0cb14f26cd5d12ade8d33472739c395233af37c
+sprites/s01-qinglong-stage-3.png,sprites,青龍,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,083984e6c6031e66b330404f9b6a2758aa215065ca45ce873f0f9fbddee3125b
+sprites/s01-qinglong-stage-4.png,sprites,青龍,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,7e6d95d17b04a91a40a82c801504151c34fd5cfb5b17da620ee297d107bf26cd
+previews/s01-qinglong-sheet.png,previews,青龍,受驚,四階,1536,1024,RGB,,beasts-v2-part-4.zip,f449e335f4cba5a1698d230b5b09042a4d5c55c40cdf27c30755094f13dcd0bd
+previews/s01-qinglong-ui.png,previews,青龍,受驚,四階,760,500,RGB,,beasts-v2-part-4.zip,c021af6bdbf2825f27de3de8e83ba72a89b611f894d27a11d21c7591b286870d
+sheets/s02-zhuque.png,sheets,朱雀,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-4.zip,ae9ae14d4d685ff150554d6d097e84c00d0f725d403aecb3a40746ee0c657683
+sprites/s02-zhuque-stage-1.png,sprites,朱雀,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,12b85406cfc14464c6579fa9735d06a5cdf4006f276f5f8a27940293eceddc18
+sprites/s02-zhuque-stage-2.png,sprites,朱雀,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,29177e49aa3dc55e7ac6dceac1b182931941efd8e602ac81afbc940fbed5cfb2
+sprites/s02-zhuque-stage-3.png,sprites,朱雀,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,58eff3f98774149e0d3d87478d0d905b2224db6cf13d57b0241307d3ad95eafb
+sprites/s02-zhuque-stage-4.png,sprites,朱雀,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,32223be6da9f534c57f3482c33dc2e0c70371a7330784f7d3ec64c9a1bba93f2
+previews/s02-zhuque-sheet.png,previews,朱雀,受驚,四階,1536,1024,RGB,,beasts-v2-part-4.zip,9ad3e34d23638dc192deac904cddcd0286d1f27536506064bbd96110ef1fa596
+previews/s02-zhuque-ui.png,previews,朱雀,受驚,四階,760,500,RGB,,beasts-v2-part-4.zip,7cd61b8d17e855917b1ef3523f5eebba57575687234ca0b48ae6aa4b9f56bcfa
+sheets/s03-qilin.png,sheets,麒麟,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-4.zip,333bda4611ac0c721f92fa4ba6e95446c54556e628d890af7f8ea4c7ab5ace69
+sprites/s03-qilin-stage-1.png,sprites,麒麟,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,60c9028747250d344b11e91f0d59d0d051e33ef9af0463bd9aec353a9c942117
+sprites/s03-qilin-stage-2.png,sprites,麒麟,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,2c4dc1939d371df5ea54e91af56cf873abc293c25e308710636892f0ff77c12c
+sprites/s03-qilin-stage-3.png,sprites,麒麟,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,8c79f3d55652b62cbe3ca6581ac2423c68c00251133b31df08e830d7a71ec122
+sprites/s03-qilin-stage-4.png,sprites,麒麟,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,45b7cd2a2bd87283949a7e19c5acc0d7de4b99f43811f5963c679dfdbfc17b46
+previews/s03-qilin-sheet.png,previews,麒麟,受驚,四階,1536,1024,RGB,,beasts-v2-part-4.zip,358da861b167b8b0277cd7549730429e9dfc64410a0774e601725273d6ba6111
+previews/s03-qilin-ui.png,previews,麒麟,受驚,四階,760,500,RGB,,beasts-v2-part-4.zip,0d5282c638716c67bcd209d44cca2e792108fed7e268fc64a7a6a31354400a1e
+sheets/s04-kitsune.png,sheets,九尾狐,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-4.zip,5b596dc7a4b10e6f3856700e62156c9893d2b25bf7a23bc9e04fada9b9446e93
+sprites/s04-kitsune-stage-1.png,sprites,九尾狐,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,c68b8f84c583fc70f1f2dbc2ac6d4c00ea4dfe37b3d537b4c3f081dbc626866b
+sprites/s04-kitsune-stage-2.png,sprites,九尾狐,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,cdabd7dc4b343341c869db083f5c177900b204629bb5af8488dba52a2d18a0aa
+sprites/s04-kitsune-stage-3.png,sprites,九尾狐,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,578f0df03208d882419733be6fffa3c7c5f2f52f94ce2b6e0efdd6a6d172a3df
+sprites/s04-kitsune-stage-4.png,sprites,九尾狐,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-4.zip,2395b3e02d65449095bfc5c49208104cfef334d15640f423d97830cc856ca309
+previews/s04-kitsune-sheet.png,previews,九尾狐,受驚,四階,1536,1024,RGB,,beasts-v2-part-4.zip,1d64a73113c2bae5cb8e3ecf71013c20e7c06160656ee4de6243833c93889b75
+previews/s04-kitsune-ui.png,previews,九尾狐,受驚,四階,760,500,RGB,,beasts-v2-part-4.zip,f4d51fb9a961197bdac392b089990eee815b63dfd5b97ec93e5f8906664aecc5
+sheets/s05-orochi.png,sheets,八岐大蛇,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-5.zip,5c53d6eaf96bcdbb369e0036d2b888eec2495307d614a8605bda46e9cc06a568
+sprites/s05-orochi-stage-1.png,sprites,八岐大蛇,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,c4362df9c78d92b0d7ea73325a522f0758ab984ec2bc98496a89db16aa8315cc
+sprites/s05-orochi-stage-2.png,sprites,八岐大蛇,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,77a8c9fc13b80b40d10f11ceb3b74855d32aeb6ed13ba4cb8904ec97415a911e
+sprites/s05-orochi-stage-3.png,sprites,八岐大蛇,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,d675ea51b076ef89db5f03c1f602db518e1d51edc12a75a84e9ef48647e88069
+sprites/s05-orochi-stage-4.png,sprites,八岐大蛇,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,52c0b1e8bcf00b5475e814968f90bc96743bcc201fd55d25c4846cfab3a58d24
+previews/s05-orochi-sheet.png,previews,八岐大蛇,受驚,四階,1536,1024,RGB,,beasts-v2-part-5.zip,fff1686deaba5b315d50f180ed300cd7e18610cd9c3a7209e626dbbe43c2a9b8
+previews/s05-orochi-ui.png,previews,八岐大蛇,受驚,四階,760,500,RGB,,beasts-v2-part-5.zip,2dc54ace90bef6c5827960f6a5e45cb0afd77c20aecf421d7562090e8ad4b9fd
+sheets/s06-baku.png,sheets,夢貘,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-5.zip,68eb21b700193f221a95ec2f0606cbe2f363c20fe1acbfd07e61969069a573f0
+sprites/s06-baku-stage-1.png,sprites,夢貘,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,f8e591e40dcd4ce8d40b6c8257595ae354114fa0dd601ce00e26ad0f392d888d
+sprites/s06-baku-stage-2.png,sprites,夢貘,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,d598e3b8a7c29d1a39745dec5413cc207a32baddcb3f7cc4ccac6c8ffd869be1
+sprites/s06-baku-stage-3.png,sprites,夢貘,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,18711face77aac58a0cae1c1afb54bc456c224e93a622d3d57e817970f0adfac
+sprites/s06-baku-stage-4.png,sprites,夢貘,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,2d0cbd1959449f6ae2e564a2e3253ff32c1fd2972c537f9d95db269c06c8591b
+previews/s06-baku-sheet.png,previews,夢貘,受驚,四階,1536,1024,RGB,,beasts-v2-part-5.zip,3db48e10cb47175d29e6c27912c5c6749ca1c26847ffc7eb8a7663f9e290adf5
+previews/s06-baku-ui.png,previews,夢貘,受驚,四階,760,500,RGB,,beasts-v2-part-5.zip,ffc23e69f6598e03ae5f3d69221126f36595f2a4de9fd088f2c8b03642981b7c
+sheets/s07-angel.png,sheets,小天使,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-5.zip,ed33a9bb9162081bcd52658e1a9ef53a194fbcf860e492f2de228b92f45b7452
+sprites/s07-angel-stage-1.png,sprites,小天使,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,16c3d20257ea419a574a57e62610c70492b71734523cd9b0e5385541bdf847dc
+sprites/s07-angel-stage-2.png,sprites,小天使,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,b381be32babe07e0bd443f4ee24891c2955ce8ac982d73b0f90d671734e60690
+sprites/s07-angel-stage-3.png,sprites,小天使,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,73aefa837f2c9341e3765d974928b96934b635559b4b0b1378069ded3e84b5af
+sprites/s07-angel-stage-4.png,sprites,小天使,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,df058ad624b32b74fb3da08c0d87a59d1ed8785f2ecf6edf19526d42a74c5206
+previews/s07-angel-sheet.png,previews,小天使,受驚,四階,1536,1024,RGB,,beasts-v2-part-5.zip,3ff770027287b77bde038d8559c3db984e2c566ec1011e729398a26c1a42cbe2
+previews/s07-angel-ui.png,previews,小天使,受驚,四階,760,500,RGB,,beasts-v2-part-5.zip,049c64ca69f00f3b2a1a40ffc2dd1d2c9cf2ddd268fe1a041fb56a6ae348905f
+sheets/s08-mermaid.png,sheets,人魚,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-5.zip,27303cde3097fd3b801adbb872f1ed44e72295524e6774e4f92454b9afa9d72a
+sprites/s08-mermaid-stage-1.png,sprites,人魚,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,86fb3ab1b6a5e8f5d0767be73ba682e2109347421d90bab6b4b2de380153e2ef
+sprites/s08-mermaid-stage-2.png,sprites,人魚,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,3a30747eecf0e158b24837a29a58758913da6bd097ad861b87cb1ccba822fce7
+sprites/s08-mermaid-stage-3.png,sprites,人魚,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,1fe1c0ad091a9388cac5cf71eae1928421bebdb7ec742eb44ff3d4a6ff2fc903
+sprites/s08-mermaid-stage-4.png,sprites,人魚,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-5.zip,6b282e6025679524681b82e208f21f3637e779fcf1a6c52fd06ce9f4cfb3ee0c
+previews/s08-mermaid-sheet.png,previews,人魚,受驚,四階,1536,1024,RGB,,beasts-v2-part-5.zip,6c2aa3a410d85c4e081b61499ba9fab326e5b1820f6f8e03c0126fc441398db0
+previews/s08-mermaid-ui.png,previews,人魚,受驚,四階,760,500,RGB,,beasts-v2-part-5.zip,3fb38bdb05c39502afd7b48f8d0b54a838c3c90e609256fd6a1be7e6d68eb556
+sheets/s09-unicorn.png,sheets,獨角獸,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-6.zip,1fa74ce9c087966e3249bf4a27770053d6b0695286dc452c434c555cbbdc72c9
+sprites/s09-unicorn-stage-1.png,sprites,獨角獸,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,58e5121faf617f4064ab0d0ca5cf380b13347ff678bfdb93765f16d6dccb296e
+sprites/s09-unicorn-stage-2.png,sprites,獨角獸,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,c246bdcf0f9af66588f5e4a5d911b00de92ec3a6939e8a2e90e0a94c096ef214
+sprites/s09-unicorn-stage-3.png,sprites,獨角獸,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,99d1d3834e2fe30284757f50e6dcd37d253af54da68f9b43cbbf7106c1c0ddbf
+sprites/s09-unicorn-stage-4.png,sprites,獨角獸,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,1a02c594c10c593781700be5d261d0303a269dabe0171c6bc3abb0d6f57975cc
+previews/s09-unicorn-sheet.png,previews,獨角獸,受驚,四階,1536,1024,RGB,,beasts-v2-part-6.zip,af350bc504d943ca3af6dfdcca7ed3e6871be4fc30e802d462fe808d0c0198fb
+previews/s09-unicorn-ui.png,previews,獨角獸,受驚,四階,760,500,RGB,,beasts-v2-part-6.zip,c79dd19d50cb457bafffc4de6f2528ec7d74575f911e39feabd7df139e016c93
+sheets/s10-griffin.png,sheets,獅鷲,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-6.zip,f42dcbaa95c33a29ebbf662ef8112ec2de9ccada5dd546905724e3d32870e415
+sprites/s10-griffin-stage-1.png,sprites,獅鷲,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,4154048abea6ff25667d9abb05baa7c186c6fab743497e09fbc6a0c4a7b19ab9
+sprites/s10-griffin-stage-2.png,sprites,獅鷲,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,f1de321419b4cab02e8244c489dc0e9191d0a797042a772a9aa5f9f9b7231e06
+sprites/s10-griffin-stage-3.png,sprites,獅鷲,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,1ad4fbc4a60f5163fd3a930cb339486163dc04b7e09ec1032b9ece276badd5fa
+sprites/s10-griffin-stage-4.png,sprites,獅鷲,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,d3a5c3dacbf01f46b8a19c25fb95f5a17f75d4d3b602a13ecd89bb95c0e1b79b
+previews/s10-griffin-sheet.png,previews,獅鷲,受驚,四階,1536,1024,RGB,,beasts-v2-part-6.zip,3a187a84f8ef13b99817a373357e6d5cf1b8414aab78bf5de5db2fe8154c23d6
+previews/s10-griffin-ui.png,previews,獅鷲,受驚,四階,760,500,RGB,,beasts-v2-part-6.zip,eb8e812252642f6f4d007175de7e5e4ade3706ce071b863a601b4e9bb27d5364
+sheets/s11-fenrir.png,sheets,芬里爾,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-6.zip,4a6448c06b5800389611d8f40435fa2c60d309901d35f01e3adc87b9161eb3de
+sprites/s11-fenrir-stage-1.png,sprites,芬里爾,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,ebff0c90f276ca4b1d2afd8ddbce0190730628ebe4beaa856594d98b5b4f4d16
+sprites/s11-fenrir-stage-2.png,sprites,芬里爾,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,b523aea85508a0c90bb68a7e663c2da32e116e72361dc973312622a45d22894d
+sprites/s11-fenrir-stage-3.png,sprites,芬里爾,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,bd15b743b7a245bad0f7374205264633ca511d22c61e9cff12e75c47bdf34771
+sprites/s11-fenrir-stage-4.png,sprites,芬里爾,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,aefe1f2c3ae180787f7085bf45cf22d27406e265b51da538d3ee20124e4ac72d
+previews/s11-fenrir-sheet.png,previews,芬里爾,受驚,四階,1536,1024,RGB,,beasts-v2-part-6.zip,75dbc1613709b6c9098cff5b9cf7a6e05d55e23643f4603683fd19b0aa086157
+previews/s11-fenrir-ui.png,previews,芬里爾,受驚,四階,760,500,RGB,,beasts-v2-part-6.zip,2e0c208c9d5106377ef39604d5681a66566343b09267054b71d428d5522fc831
+sheets/s12-bastet.png,sheets,巴斯特貓,受驚,四階,1536,1024,RGBA,"(0, 255)",beasts-v2-part-6.zip,63460f78f8e32d4d81cc51d50569aa02fd9f691165de127db9d7c51d002fc88b
+sprites/s12-bastet-stage-1.png,sprites,巴斯特貓,受驚,1,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,553a584afb41149952314e377fad1d8c153d91699c217648c33081b925a7e12d
+sprites/s12-bastet-stage-2.png,sprites,巴斯特貓,受驚,2,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,eaa1314cf25f31cd76ab602b2954c07a24754a937a7b48cd213893b02773861e
+sprites/s12-bastet-stage-3.png,sprites,巴斯特貓,受驚,3,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,0d9e9acdf071677ab7c837d1dcbde2dcce787815d93efa577c7a6865ab9f3c52
+sprites/s12-bastet-stage-4.png,sprites,巴斯特貓,受驚,4,512,512,RGBA,"(0, 255)",beasts-v2-part-6.zip,4cc691e60f42fd16fc34bd829d84a33052e0cc39748c227aef0303f46229f3fa
+previews/s12-bastet-sheet.png,previews,巴斯特貓,受驚,四階,1536,1024,RGB,,beasts-v2-part-6.zip,070a006c28588377991f8da617edcf2fe1d4a9787236f656c46738daba4d8cc5
+previews/s12-bastet-ui.png,previews,巴斯特貓,受驚,四階,760,500,RGB,,beasts-v2-part-6.zip,c55b21abf3d2c4e71d387ea5dc0ef936b92f5cd34b4a8fe402b6dc947cc255d2
+sheets/13-badges.png,sheets,13-badges,圖示,,1536,1024,RGBA,"(0, 255)",beasts-v2-part-7.zip,aa07101002220315a732defeb17740a8a31675ce5ecb13b827f9e631f0c636b5
+sprites/13-badges-01.png,sprites,煉氣,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,8504dbb2c52e1760b12d4d778a78c65495947521fedb5d8a30db1545f9c8cd94
+sprites/13-badges-02.png,sprites,築基,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,67aab1d1b977e7a9128883889bd8455b7318e7f08c59debd7884b9d03c1d08f1
+sprites/13-badges-03.png,sprites,結丹,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,3c708f30e6899f57b14149ed0c8945e0d695a9e23c7d2ad5d37157d6ea261da7
+sprites/13-badges-04.png,sprites,元嬰,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,f6731ed13dd6e62d0b17bb851e0aa9e8a9177c9e88cc430c662d6a19fe5b7c55
+sprites/13-badges-05.png,sprites,化神,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,4c6cf6f7eb1170e26d6fbe298d7fc85c6d8b7170126481ec2bba34a8013af9fc
+sprites/13-badges-06.png,sprites,煉虛,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,8feb7502fd4313eb5990c24239116961b3f52cf2fa225abadf6bc366f443581c
+sprites/13-badges-07.png,sprites,合體,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,feb94240eb223c0699d2913c8205cb1fbd5ceb8f66a48931a0f6261d133a2d81
+sprites/13-badges-08.png,sprites,大乘,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,e4880f1330a73a4bb9e6791c9f009ddea8e66af99bbcfd40aecc94fa42f582ba
+sprites/13-badges-09.png,sprites,渡劫,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,ea60e9dfc1e421d5d6700e2ce03466fec8cede1ebf341793e2c59263eda14cba
+sprites/13-badges-10.png,sprites,真仙,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,ffc887d9a43f3c400da364df48ad36cb0cddd8dc052e981429968421215ee1e5
+sprites/13-badges-11.png,sprites,金仙,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,ab4da199b040e40e80d7c4a86253d19e422743868c1c82c66bb54c6457fe59d7
+sprites/13-badges-12.png,sprites,大羅金仙,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,99314ee404a577e2a2465bb818c49482b066c1e1907f272bf3a977da6e099f50
+previews/13-badges-sheet.png,previews,13-badges,圖示,,1536,1024,RGB,,beasts-v2-part-7.zip,199925c59565a9d8d42e02bed45406c248fb7ab7b7a120dc8cb2195264cd6f3a
+sheets/14-steward.png,sheets,14-steward,圖示,,1536,1024,RGBA,"(0, 255)",beasts-v2-part-7.zip,6370bb6a6f165a18015926fec21d5ab71b5ea7a4d0fa7fcf76c4b2f22110d91b
+sprites/14-steward-01.png,sprites,平時,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,8ab66ec9e62769280308844f5f5b02603da457c04eccc8d471420a9b1d1c7634
+sprites/14-steward-02.png,sprites,警告,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,8daecccd103628dce2951f2287c95238e274bc518750d326e6bd268a8f93dc14
+sprites/14-steward-03.png,sprites,懲罰,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,6cdef68a24ee3faba918c9c8eaec44bf8eaf0cb3059dac923d2efafbfab5b1b3
+previews/14-steward-sheet.png,previews,14-steward,圖示,,1536,1024,RGB,,beasts-v2-part-7.zip,8827340146a627fab35d4b87d0a125a0d65d0677262719978e19df20bac8781d
+sheets/15-items.png,sheets,15-items,圖示,,1536,1024,RGBA,"(0, 255)",beasts-v2-part-7.zip,97eec90869c7c3bc27641c2b073631d5b709d26674e03c3f0d16d69d34149cf8
+sprites/15-items-01.png,sprites,靈石,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,3c8f12c5d0a3eb000bd3ff935beea4c0c275dbaa3ff0505fb5216538caddf23a
+sprites/15-items-02.png,sprites,定心符,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,e13eefa7d2137bc9d07ded4a7b9e0d0f00fd9f6f7e7a92d355d99a7efd025e4f
+sprites/15-items-03.png,sprites,破境丹,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,fd1715d9abd36a3af159696d8cedbd88bd9da896c31c8e553eaeebc87d32ca26
+sprites/15-items-04.png,sprites,聚靈丹,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,4456f4067678186855e2c264498b9a43170e6c6884850050f3beca946aec0962
+sprites/15-items-05.png,sprites,洗髓丹,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,e3895ea9e0532ac057af924bbf1ba97b43d4ba98461ae5b875901221528affb2
+sprites/15-items-06.png,sprites,改名卡,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,9323d7b334b6a7b556e8e15838544565fd3ec903711f04a6cdbae78a12866dde
+sprites/15-items-07.png,sprites,靈獸飾品—小仙帽,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,0504957c3adeeac26a26be164abef3c0f5eb8492bc123251c1274ee1fc7925b9
+sprites/15-items-08.png,sprites,現實獎勵—小錦囊,圖示,,512,512,RGBA,"(0, 255)",beasts-v2-part-7.zip,6d2678b40b7bb039e818d93a20136b05c8dff5c4bc5a9cd2150c518a61a826d9
+previews/15-items-sheet.png,previews,15-items,圖示,,1536,1024,RGB,,beasts-v2-part-7.zip,96d9cda647483521eb51f9777b8a89cd5bdcfbec722d6c6ec89855f0b52a9458
+previews/roster-100px.png,previews,,,,780,620,RGB,,beasts-v2-part-7.zip,35d94846b6194d93c6aba4f12b680b6add7b8a3ac2604f2632657b297ae2b9cb
+previews/roster-150px.png,previews,,,,1080,820,RGB,,beasts-v2-part-7.zip,d43e2f17cc7675ef4a86e20d577c1265bd87762a3bfccdc7d93da4f7608d432b
+previews/roster-30-slots.png,previews,,,,780,790,RGB,,beasts-v2-part-7.zip,e4cf63ffb5de01da7f11315d27bea97562a7c4da946804929f70a773114f672f

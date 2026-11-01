@@ -6,6 +6,7 @@ const ROOT = path.resolve(__dirname, '..');
 const MOCK = path.join(__dirname, 'mocks');
 const MIME = { '.html':'text/html;charset=utf-8', '.js':'text/javascript;charset=utf-8', '.css':'text/css;charset=utf-8', '.json':'application/json', '.pdf':'application/pdf' };
 
+// opts.path：要開的頁面（預設 index.html；小森靈獸用 'beasts.html'）
 async function launch(opts = {}) {
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
@@ -26,13 +27,22 @@ async function launch(opts = {}) {
   for (const [re, f] of [[/firebase-app\.js/, 'mock-app.js'], [/firebase-firestore\.js/, 'mock-firestore.js'], [/firebase-auth\.js/, 'mock-auth.js']])
     await page.route(re, r => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(MOCK, f)) }));
   await page.route(/fonts\.googleapis\.com/, r => r.fulfill({ contentType: 'text/css', body: '' }));
+  // 靈獸圖：PNG 還沒放進 repo 時直接回同名 SVG 佔位圖（和正式站的 onerror 後援一致），免得 404 進 console 被當錯誤
+  await page.route(/\/assets\/beasts\/[^/]+\.png$/, r => {
+    const png = path.join(ROOT, new URL(r.request().url()).pathname);
+    if (fs.existsSync(png)) return r.continue();
+    const normal = png.replace(/-scared\.png$/, '.png');   // 受驚圖缺 → 一般圖（正式站由 onerror 處理）
+    if (normal !== png && fs.existsSync(normal)) return r.fulfill({ contentType: 'image/png', body: fs.readFileSync(normal) });
+    const svg = normal.replace(/\.png$/, '.svg');
+    return fs.existsSync(svg) ? r.fulfill({ contentType: 'image/svg+xml', body: fs.readFileSync(svg) }) : r.fulfill({ status: 404, body: '' });
+  });
   // pdf.js：本機有 pdfjs-dist 就用本機（沙盒連不到 CDN），否則放行真的 CDN
   const local = opts.pdfjsDir || process.env.PDFJS_DIR;
   if (local && fs.existsSync(path.join(local, 'pdf.min.mjs'))) {
     await page.route(/pdf\.min\.mjs$/, r => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(local, 'pdf.min.mjs')) }));
     await page.route(/pdf\.worker\.min\.mjs$/, r => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(local, 'pdf.worker.min.mjs')) }));
   }
-  await page.goto(`http://127.0.0.1:${port}/`);
+  await page.goto(`http://127.0.0.1:${port}/${opts.path || ''}`);
   await page.waitForTimeout(300);
 
   const log = (...a) => console.log('•', ...a);
