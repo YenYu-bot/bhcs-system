@@ -33,8 +33,8 @@
 .beast-img{width:100%;aspect-ratio:1;object-fit:contain;display:block;filter:drop-shadow(0 6px 10px rgba(0,0,0,.4));transition:transform .3s,filter .3s;}
 .beast-card.scared .beast-img,.pj-card.scared .beast-img{animation:wobble 1.2s ease-in-out infinite;}
 .beast-card.scared .beast-img.fx,.pj-card.scared .beast-img.fx{filter:grayscale(1) brightness(.7);}   /* 沒有專屬受驚圖時的後援 */
-.beast-card.stage-3 .beast-img,.pj-card.stage-3 .beast-img{filter:drop-shadow(0 0 14px rgba(241,196,15,.45));}
-.beast-card.stage-4 .beast-img,.pj-card.stage-4 .beast-img{filter:drop-shadow(0 0 22px rgba(255,255,255,.55)) drop-shadow(0 0 10px var(--c,#fff));}
+.beast-card.stage-3 .beast-img,.pj-card.stage-3 .beast-img{filter:drop-shadow(0 0 6px rgba(241,196,15,.35));}   /* v2 圖本身已有貼身光環，格子裡只留淡淡一圈 */
+.beast-card.stage-4 .beast-img,.pj-card.stage-4 .beast-img{filter:drop-shadow(0 0 8px var(--c,#fff));}
 .beast-name{font-weight:900;font-size:14px;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .beast-pet{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .beast-realm{display:inline-block;margin-top:4px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.07);border:1px solid var(--border);}
