@@ -79,16 +79,17 @@
 
 **部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
 
-**圖片檔名**（共 71 張，已全部到位；要換圖就把新的設定圖放進 `assets/beasts-src/`（檔名開頭 `01-`～`15-`）再跑切圖工具）：
+**圖片檔名**（共 119 張；要換圖就把新的設定圖放進 `assets/beasts-src/`（檔名開頭 `01-`～`15-`）再跑切圖工具）：
 
 | 檔名 | 張數 | 說明 |
 |---|---|---|
 | `{key}-{1..4}.png` | 48 | 12 隻 × 4 階。`key` = qinglong 青龍、baihu 白虎、zhuque 朱雀、xuanwu 玄武、qilin 麒麟、jiuwei 九尾狐、kunpeng 鯤鵬、baize 白澤、pixiu 貔貅、xiezhi 獬豸、suanni 狻猊、kuiniu 夔牛 |
+| `{key}-{1..4}-scared.png` | 48 | 受驚態（管家懲罰時顯示）；某隻還沒有就退回一般圖加灰階抖動。來源：`assets/beasts-src/scared/`，`python3 tools/import-scared.py <資料夾>` 匯入 |
 | `steward-{1..3}.png` | 3 | 護山管家：平時／警告／懲罰 |
 | `realm-{1..12}.png` | 12 | 境界徽章（目前 UI 未使用，預留） |
 | `item-{stone,dingxin,pojing,juling,xisui,rename,hat,real}.png` | 8 | 道具圖示（目前 UI 未使用，預留） |
 
-受驚（灰階抖動）、加分、進化、招式橫幅都是 CSS 動畫，不另外出圖。
+加分、進化、招式橫幅都是 CSS 動畫；受驚有專屬圖，抖動是 CSS。
 
 ## 測試
 

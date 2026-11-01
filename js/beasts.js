@@ -14,7 +14,7 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from
 import { REALMS, STAGE_NAMES, TRIAL_HINTS, BEASTS, BEAST_MAP, SHOP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig,
   weekKey, dayKey, monthKey, multiplier, capWeekPts, capWeekStones, capHoldStones, realmFor, realmInfo, nextRealm, progress,
   trialPending, trialCooldownLeft, newBeast, normName, rollWeek, applyPts, penaltyPts, penaltyStones, grantStones,
-  stageOf, imgSrc, imgFallback, fmtTs, randomId } from "./beast-core.js";
+  stageOf, imgSrc, imgFallback, imgScared, fmtTs, randomId } from "./beast-core.js";
 import { qrSvg } from "./vendor/qr.js";
 
 const firebaseConfig = {
@@ -62,7 +62,13 @@ function authErrMsg(e) {
   if (/permission-denied/.test(c)) return '沒有權限（請確認 firestore.rules 已更新）';
   return e?.message || String(e);
 }
-const img = (b, extra = '') => `<img class="beast-img" src="${imgSrc(b.beast, stageOf(b.realm))}" onerror="this.onerror=null;this.src='${imgFallback(b.beast, stageOf(b.realm))}'" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`;
+// 受驚中用專屬受驚圖；該隻還沒有受驚圖時退回一般圖並加 CSS 灰階抖動（class fx）
+const img = (b, extra = '', scared = false) => {
+  const st = stageOf(b.realm), normal = imgSrc(b.beast, st), svg = imgFallback(b.beast, st);
+  const fallback = `this.onerror=function(){this.onerror=null;this.src='${svg}'};this.src='${normal}';this.classList.add('fx')`;
+  return scared ? `<img class="beast-img" src="${imgScared(b.beast, st)}" onerror="${fallback}" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`
+    : `<img class="beast-img" src="${normal}" onerror="this.onerror=null;this.src='${svg}'" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`;
+};
 const beastLink = id => location.origin + location.pathname.replace(/beasts\.html$/, 'beast.html') + '?t=' + id;
 
 // ══════════════════════════════════════════════════════════════
@@ -163,13 +169,14 @@ window.selectClass = function (id) {
 };
 function csWeek() { const wk = weekKey(); const iss = classState.issued || {}; return iss.weekKey === wk ? (iss.total || 0) : 0; }
 function classBudget() { return (cls?.students || []).length * cfg.caps.classWeekPerStudent; }
-function scaredNow() { const s = classState.steward || {}; return s.scaredUntil > Date.now() && (s.scaredLevel === 'mid' || s.scaredLevel === 'heavy'); }
+function scaredNow() { const s = classState.steward || {}; return s.scaredUntil > Date.now() && (s.scaredLevel === 'mid' || s.scaredLevel === 'heavy'); }   // 加分減半
+function scaredVisual() { const s = classState.steward || {}; return s.scaredUntil > Date.now(); }   // 受驚圖＋抖動（輕級也有）
 function renderClassBar() {
   if (!cls) return;
   const used = csWeek(), budget = classBudget();
   const g = classState.goal || {}; const wk = weekKey();
   const chips = [`<span class="chip">本週靈石額度 ${used}/${budget}${used >= budget ? '（已用完）' : ''}</span>`];
-  if (scaredNow()) chips.push(`<span class="chip bad">😨 受驚中，加分減半至 ${fmtTs(classState.steward.scaredUntil).slice(-5)}</span>`);
+  if (scaredVisual()) chips.push(`<span class="chip bad">😨 受驚中${scaredNow() ? '，加分減半' : ''}至 ${fmtTs(classState.steward.scaredUntil).slice(-5)}</span>`);
   if ((classState.steward || {}).on) chips.push(`<span class="chip warn">🔔 管家 ${classState.steward.strikes || 0}/2</span>`);
   $('classStats').innerHTML = chips.join('');
   if (document.activeElement !== $('goalText')) $('goalText').value = g.weekKey === wk ? (g.text || '') : '';
@@ -187,9 +194,10 @@ function cardHtml(b, name, pj = false) {
   const info = BEAST_MAP[b.beast] || BEASTS[0], r = realmInfo(b.realm), nxt = nextRealm(b.realm);
   const pend = trialPending(b);
   const cosmetics = (b.cosmetics || []);
-  return `<div class="${pj ? 'pj-card' : 'beast-card'} stage-${r.stage} ${scaredNow() && !(b.items || {}).dingxin ? 'scared' : ''}" style="--c:${info.color}" data-id="${b._id}" ${pj ? '' : `onclick="openStudent('${b._id}')"`}>
+  const scared = scaredVisual() && !(b.items || {}).dingxin;
+  return `<div class="${pj ? 'pj-card' : 'beast-card'} stage-${r.stage} ${scared ? 'scared' : ''}" style="--c:${info.color}" data-id="${b._id}" ${pj ? '' : `onclick="openStudent('${b._id}')"`}>
     ${cosmetics.includes('hat') ? '<span class="mark">🎩</span>' : ''}${b.julingActive ? '<span class="mark2">聚靈</span>' : ''}
-    ${img(b)}
+    ${img(b, '', scared)}
     <div class="beast-name">${esc(b.name)}</div>
     <div class="beast-pet">${esc(b.petName || info.name)}${cosmetics.includes('cloud') ? ' ☁️' : ''}</div>
     <div class="beast-realm ${pend ? 'trial' : ''}">${r.name}${pend ? ' · 待試煉' : ''}</div>
@@ -469,7 +477,7 @@ function curBeast() { return Object.values(beasts).find(b => b._id === openBeast
 function renderStudent(full = true) {
   const b = curBeast(); if (!b) return;
   const info = BEAST_MAP[b.beast], r = realmInfo(b.realm), nxt = nextRealm(b.realm), mult = multiplier(b.courseCount, cfg);
-  $('smImg').innerHTML = img(b);
+  $('smImg').innerHTML = img(b, '', scaredVisual() && !(b.items || {}).dingxin);
   $('smName').textContent = `${b.name}${b.petName ? '・' + b.petName : ''}`;
   $('smRealm').textContent = `第 ${b.realm} 境 ${r.name} · ${STAGE_NAMES[r.stage]}${info.name} · ${info.attr}`;
   $('smBar').style.width = Math.round(progress(b.pts, b.realm) * 100) + '%'; $('smBar').style.setProperty('--c', info.color);
@@ -662,11 +670,11 @@ async function strike(set) {
 function beep(freq, dur) { try { const c = sw.ctx || new AudioContext(); const o = c.createOscillator(), g = c.createGain(); o.frequency.value = freq; o.connect(g); g.connect(c.destination); g.gain.value = 0.15; o.start(); o.stop(c.currentTime + dur); } catch (e) { } }
 function renderStewardRemote() {
   const st = classState.steward || {}; const fig = $('stewardFig');
-  fig.classList.toggle('warn', st.strikes === 1); fig.classList.toggle('angry', scaredNow());
+  fig.classList.toggle('warn', st.strikes === 1); fig.classList.toggle('angry', scaredVisual());
   const pj = $('pjSteward');
   if (!st.on) { pj.style.display = 'none'; return; }
-  pj.style.display = ''; pj.className = 'pj-steward ' + (scaredNow() ? 'angry' : st.strikes ? 'warn' : '');
-  pj.innerHTML = `<img src="assets/beasts/steward-${scaredNow() ? 3 : st.strikes ? 2 : 1}.png" onerror="this.onerror=null;this.src=this.src.replace('.png','.svg')"> 管家 ${scaredNow() ? '😨 受驚中' : st.paused ? '⏸' : (st.strikes || 0) + '/2'}`;
+  pj.style.display = ''; pj.className = 'pj-steward ' + (scaredVisual() ? 'angry' : st.strikes ? 'warn' : '');
+  pj.innerHTML = `<img src="assets/beasts/steward-${scaredVisual() ? 3 : st.strikes ? 2 : 1}.png" onerror="this.onerror=null;this.src=this.src.replace('.png','.svg')"> 管家 ${scaredVisual() ? '😨 受驚中' : st.paused ? '⏸' : (st.strikes || 0) + '/2'}`;
 }
 
 // ══════════════════════════════════════════════════════════════

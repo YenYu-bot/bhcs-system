@@ -209,6 +209,7 @@ export function skillsUnlocked(b) {
 export function stageOf(lv) { return realmInfo(lv).stage; }
 export function imgSrc(beastKey, stage) { return `assets/beasts/${beastKey}-${stage}.png`; }
 export function imgFallback(beastKey, stage) { return `assets/beasts/${beastKey}-${stage}.svg`; }
+export function imgScared(beastKey, stage) { return `assets/beasts/${beastKey}-${stage}-scared.png`; }
 
 export function fmtTs(ts) {
   const d = taipeiNow(ts);

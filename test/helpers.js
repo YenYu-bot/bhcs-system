@@ -31,7 +31,9 @@ async function launch(opts = {}) {
   await page.route(/\/assets\/beasts\/[^/]+\.png$/, r => {
     const png = path.join(ROOT, new URL(r.request().url()).pathname);
     if (fs.existsSync(png)) return r.continue();
-    const svg = png.replace(/\.png$/, '.svg');
+    const normal = png.replace(/-scared\.png$/, '.png');   // 受驚圖缺 → 一般圖（正式站由 onerror 處理）
+    if (normal !== png && fs.existsSync(normal)) return r.fulfill({ contentType: 'image/png', body: fs.readFileSync(normal) });
+    const svg = normal.replace(/\.png$/, '.svg');
     return fs.existsSync(svg) ? r.fulfill({ contentType: 'image/svg+xml', body: fs.readFileSync(svg) }) : r.fulfill({ status: 404, body: '' });
   });
   // pdf.js：本機有 pdfjs-dist 就用本機（沙盒連不到 CDN），否則放行真的 CDN
