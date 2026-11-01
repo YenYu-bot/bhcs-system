@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>百宏文教 · 小森靈獸</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=202611012323">
+<link rel="stylesheet" href="css/beasts.css?v=202611012323">
+</head>
+<body>
+<div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
+<div class="toast" id="toast"></div>
+
+<!-- ───────── 登入 ───────── -->
+<div id="loginPage" class="login-page">
+  <div class="login-card">
+    <div class="brand-sub">百宏文教</div>
+    <div class="brand" style="font-size:24px;margin-bottom:4px">小森靈獸</div>
+    <div class="login-sub">課堂加分 × 本命靈獸。使用教室日誌的老師帳號登入。</div>
+    <div class="field-wrap"><label class="field-label">帳號</label><input class="field-input" id="loginUser" placeholder="老師帳號或 admin" autocomplete="username"></div>
+    <div class="field-wrap"><label class="field-label">密碼</label><input class="field-input" id="loginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()"></div>
+    <div class="login-err" id="loginErr"></div>
+    <button class="btn btn-teal" style="width:100%;padding:12px" onclick="login()">登入</button>
+    <div class="login-foot"><a href="index.html">← 回教室日誌</a></div>
+  </div>
+</div>
+
+<!-- ───────── 主畫面 ───────── -->
+<div id="appPage" style="display:none">
+  <div class="header">
+    <div><div class="brand-sub">百宏文教</div><div class="brand">小森靈獸</div></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+      <span class="badge badge-teal" id="userBadge"></span>
+      <button class="btn btn-ghost btn-sm" onclick="openProjector()">🖥 投影</button>
+      <a class="btn btn-ghost btn-sm" href="index.html" style="text-decoration:none">教室日誌</a>
+      <button class="btn btn-ghost btn-sm" onclick="logout()">登出</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="class" onclick="showTab('class')">🏫 課堂</button>
+      <button class="tab" data-tab="tasks" onclick="showTab('tasks')">📜 任務與靈石</button>
+      <button class="tab" data-tab="steward" onclick="showTab('steward')">🔔 護山管家</button>
+      <button class="tab admin-only" data-tab="config" onclick="showTab('config')">⚙️ 設定</button>
+      <button class="tab admin-only" data-tab="report" onclick="showTab('report')">📊 報表</button>
+      <button class="tab" data-tab="hall" onclick="showTab('hall')">🏆 名人堂</button>
+    </div>
+
+    <!-- 班級選擇（課堂 / 任務 / 管家共用） -->
+    <div class="card class-bar" id="classBar">
+      <select class="select-input" id="classSelect" onchange="selectClass(this.value)"><option value="">選擇班級…</option></select>
+      <div class="class-stats" id="classStats"></div>
+    </div>
+
+    <!-- 課堂 -->
+    <div id="tab-class">
+      <div class="card goal-card" id="goalCard" style="display:none">
+        <div class="goal-row">
+          <div class="goal-label">本週全班目標</div>
+          <input class="field-input" id="goalText" placeholder="例：全班作業全交、出席 100%、小考平均 80" onchange="saveGoal()">
+          <button class="btn btn-teal btn-sm" id="goalBtn" onclick="awardGoal()">✅ 達成，每人 +<span id="goalPts">2</span></button>
+        </div>
+        <div class="goal-note" id="goalNote"></div>
+      </div>
+      <div class="beast-grid" id="beastGrid"><div class="empty">請先選擇班級</div></div>
+    </div>
+
+    <!-- 任務與靈石 -->
+    <div id="tab-tasks" style="display:none">
+      <div class="card">
+        <div class="card-title">新增任務</div>
+        <div class="task-form">
+          <input class="field-input" id="taskTitle" placeholder="任務名稱，例：背熟 20 個單字">
+          <input class="field-input" id="taskStones" type="number" min="1" placeholder="靈石">
+          <select class="select-input" id="taskKind"><option value="once">一次性</option><option value="daily">每日</option><option value="weekly">每週</option></select>
+          <select class="select-input" id="taskScope" onchange="taskScopeChanged()"><option value="class">全班</option><option value="students">指定學生</option></select>
+          <input class="field-input" id="taskDeadline" type="date" title="期限（選填）">
+          <button class="btn btn-teal" onclick="createTask()">建立</button>
+        </div>
+        <div id="taskStudentPick" class="pick-list" style="display:none"></div>
+        <div class="hint" id="taskHint"></div>
+      </div>
+      <div id="taskList"></div>
+    </div>
+
+    <!-- 護山管家 -->
+    <div id="tab-steward" style="display:none">
+      <div class="card">
+        <div class="steward-head">
+          <div class="steward-fig" id="stewardFig"><img src="assets/beasts/steward-1.png" onerror="this.onerror=null;this.src='assets/beasts/steward-1.svg'" alt="護山管家"></div>
+          <div style="flex:1">
+            <div class="card-title">護山管家 · 音量偵測</div>
+            <div class="hint">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」。老師講課時請按暫停。</div>
+          </div>
+        </div>
+        <div class="steward-controls">
+          <button class="btn btn-teal" id="stewardToggle" onclick="toggleSteward()">🔔 開啟管家（先校準 10 秒）</button>
+          <button class="btn btn-ghost" id="stewardPause" onclick="pauseSteward()" disabled>⏸ 暫停</button>
+          <button class="btn btn-ghost" onclick="resetStrikes()">🔄 下課／歸零</button>
+        </div>
+        <div class="meter-wrap"><div class="meter" id="meter"></div><div class="meter-th" id="meterTh"></div></div>
+        <div class="steward-status" id="stewardStatus">尚未開啟</div>
+        <div class="steward-settings">
+          <label>門檻：環境音 +<input type="number" id="stDb" min="5" max="40" step="1"> dB</label>
+          <label>持續<input type="number" id="stHold" min="0.5" max="5" step="0.5"> 秒才算</label>
+          <label>冷卻<input type="number" id="stCool" min="1" max="30" step="1"> 秒</label>
+          <label>懲罰<select id="stLevel"><option value="light">輕：只播動畫</option><option value="mid">中：10 分鐘加分減半</option><option value="heavy">重：減半＋取消本週全班目標</option></select></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 設定（主管） -->
+    <div id="tab-config" style="display:none">
+      <div class="card"><div class="card-title">加分原因（老師按鈕）</div><div id="cfgReasons"></div><button class="btn btn-ghost btn-sm" onclick="cfgAddRow('reasons')">＋ 新增</button></div>
+      <div class="card"><div class="card-title">扣分原因</div><div id="cfgPenalty"></div><button class="btn btn-ghost btn-sm" onclick="cfgAddRow('penaltyReasons')">＋ 新增</button></div>
+      <div class="card"><div class="card-title">上限（單門課；多門課依倍率放寬）</div><div class="cfg-grid" id="cfgCaps"></div>
+        <div class="hint">課程倍率：第 1 門 <input class="mini" id="mult0" type="number" step="0.1">，第 2 門 <input class="mini" id="mult1" type="number" step="0.1">，第 3 門以上 <input class="mini" id="mult2" type="number" step="0.1"></div></div>
+      <div class="card"><div class="card-title">道具價格（靈石）</div><div id="cfgShop"></div></div>
+      <div class="card"><div class="card-title">現實獎勵（老師兌換；價格由主管核定）</div><div id="cfgReal"></div><button class="btn btn-ghost btn-sm" onclick="cfgAddRow('realReward')">＋ 新增</button></div>
+      <div class="card"><div class="card-title">管家預設</div><div class="cfg-grid" id="cfgSteward"></div></div>
+      <div class="card"><div class="card-title">境界門檻（累計靈氣）</div><div class="cfg-grid" id="cfgRealms"></div><div class="hint">改門檻後現有靈獸的境界會在下次加分時重算；★ 為試煉境界，不可改。</div></div>
+      <div style="display:flex;gap:10px;margin:8px 0 24px"><button class="btn btn-teal" onclick="saveConfig()">💾 儲存設定</button><button class="btn btn-ghost" onclick="resetConfig()">還原預設</button></div>
+    </div>
+
+    <!-- 報表（主管） -->
+    <div id="tab-report" style="display:none">
+      <div class="card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <div class="card-title" style="margin:0">靈石流向（防通膨）</div>
+          <input class="field-input" id="reportMonth" type="month" style="width:auto" onchange="loadReport()">
+          <button class="btn btn-ghost btn-sm" onclick="loadReport()">重新整理</button>
+        </div>
+        <div class="hint">發出長期遠大於花掉 → 加新道具或調低上限。</div>
+        <div id="reportBody"></div>
+      </div>
+    </div>
+
+    <!-- 名人堂 -->
+    <div id="tab-hall" style="display:none"><div class="card"><div class="card-title">名人堂 · 大羅金仙</div><div class="beast-grid" id="hallGrid"></div></div></div>
+  </div>
+</div>
+
+<!-- ───────── 學生面板 ───────── -->
+<div class="modal-overlay" id="studentModal" onclick="if(event.target===this)closeStudent()">
+  <div class="modal modal-wide">
+    <div class="sm-head">
+      <div class="sm-img" id="smImg"></div>
+      <div class="sm-info">
+        <div class="sm-name" id="smName"></div>
+        <div class="sm-realm" id="smRealm"></div>
+        <div class="progress"><div class="progress-bar" id="smBar"></div></div>
+        <div class="sm-meta" id="smMeta"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeStudent()">✕</button>
+    </div>
+    <div class="tabs sm-tabs" id="smTabs">
+      <button class="tab active" data-st="award" onclick="smTab('award')">➕ 加分</button>
+      <button class="tab" data-st="penalty" onclick="smTab('penalty')">➖ 懲罰</button>
+      <button class="tab" data-st="trial" onclick="smTab('trial')">⚡ 試煉</button>
+      <button class="tab" data-st="shop" onclick="smTab('shop')">🛒 商店</button>
+      <button class="tab" data-st="log" onclick="smTab('log')">📖 紀錄</button>
+      <button class="tab" data-st="qr" onclick="smTab('qr')">📱 QR</button>
+    </div>
+    <div id="st-award" class="st-pane"></div>
+    <div id="st-penalty" class="st-pane" style="display:none"></div>
+    <div id="st-trial" class="st-pane" style="display:none"></div>
+    <div id="st-shop" class="st-pane" style="display:none"></div>
+    <div id="st-log" class="st-pane" style="display:none"></div>
+    <div id="st-qr" class="st-pane" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ───────── 選獸 ───────── -->
+<div class="modal-overlay" id="pickModal" onclick="if(event.target===this)closePick()">
+  <div class="modal modal-wide">
+    <div class="modal-title" id="pickTitle">選擇本命靈獸</div>
+    <div class="modal-sub" id="pickSub">入學時選定；結丹（第 3 境）前可免費換一次。</div>
+    <div class="pick-grid" id="pickGrid"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" style="flex:1" onclick="closePick()">取消</button></div>
+  </div>
+</div>
+
+<!-- ───────── 投影模式 ───────── -->
+<div id="projector" class="projector" style="display:none">
+  <div class="pj-head">
+    <div class="pj-title" id="pjTitle"></div>
+    <div class="pj-goal" id="pjGoal"></div>
+    <div class="pj-steward" id="pjSteward" style="display:none"></div>
+    <button class="btn btn-ghost btn-sm" onclick="closeProjector()">✕ 離開</button>
+  </div>
+  <div class="pj-grid" id="pjGrid"></div>
+  <div class="pj-banner" id="pjBanner"></div>
+</div>
+
+<script type="module" src="js/beasts.js?v=202611012323"></script>
+</body>
+</html>

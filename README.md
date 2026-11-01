@@ -47,6 +47,48 @@
 - LINE 推播失敗通知：`dailyCheck` 出錯會推錯誤到 LINE 並寄 Email（指令碼屬性 `ALERT_EMAIL`，沒設就寄給執行者）；`healthCheck` 每晚 23:30 檢查當天是否成功，沒成功就提醒。`installTrigger` 會同時裝兩個觸發器。
 - 電訪週期：每月 11 日起算、次月 10 日截止（「10 月份」= 10/11～11/10，「12 月份」= 12/11～隔年 1/10）。網站與 `gas/Code.gs` 共用常數 `CT_CYCLE_START_DAY = 11`，要改兩邊一起改。LINE 每晚推播當期進度，週一、四與截止前 5 天列出未填學生姓名。
 
+## 小森靈獸（課堂加分 × 本命靈獸）
+
+`beasts.html`（老師／主管）＋ `beast.html?t=<token>`（學生 QR，無登入、唯讀）。同一個 Firebase 專案、同一組老師帳號、同一份 `classes` 名單。設定文件（規則與數值）：<https://claude.ai/artifact/DvcTpCWrMjF71RCzrwxoVy>。
+
+| 檔案 | 內容 |
+|---|---|
+| `js/beast-core.js` | 12 境界門檻、12 靈獸、道具、預設設定、上限／倍率／境界計算（純函式，可單獨測） |
+| `js/beasts.js` | 老師端：課堂加分、懲罰、試煉、商店、換獸、任務與靈石、全班目標、護山管家、投影模式、主管設定／報表、名人堂 |
+| `js/beast-view.js` | 學生頁 |
+| `js/vendor/qr.js` | 自寫 QR 產生器（版本 1–6，夠放學生連結） |
+| `assets/beasts/` | 圖片。`*.png` 由 ChatGPT 產生；沒有 PNG 時自動用同名 `*.svg` 佔位圖（`python3 tools/make-beast-placeholders.py` 重新產生） |
+
+| 集合 | 內容 |
+|---|---|
+| `beastConfig/main` | 主管設定：加分原因、扣分原因、上限、倍率、道具價格、現實獎勵、管家預設、境界門檻。缺的欄位用 `DEFAULT_CONFIG` |
+| `beasts/{token}` | 一個學生一隻（以姓名 `nameKey` 跨班共用）：`beast, petName, realm, pts, stones, weekKey, weekPts, weekStones, weekBuys, courseCount, swapUsed, trials{lv:true}, trialFailAt{lv:ts}, items{}, cosmetics[], julingActive, hall`。`token` 同時是 QR 連結鑰匙，規則只開 `get` 不開列舉 |
+| `beasts/{token}/log/{id}` | `{ ts, type, delta, stones, reason, by, byName, classId, className, undone }`；`type` = new／pts／penalty／stones／buy／item／trial／swap／goal／realm／undo |
+| `beastTasks/{id}` | 任務：`{ title, stones, kind(once/daily/weekly), scope(class/students), students[], deadline, classId, teacherId, awarded{nameKey:[key]} }` |
+| `beastClass/{classId}` | `goal{text, weekKey, doneWeek, blockedWeek}`、`issued{weekKey, total}`（本週靈石發放額）、`steward{on, strikes, lastStrikeAt, scaredUntil, scaredLevel, paused}`、`stats{YYYY-MM:{ptsIssued, stonesIssued, stonesSpent, penaltyPts, penaltyStones}}`（報表直接讀，不用 collectionGroup 索引） |
+
+規則摘要（細節都在 `beast-core.js`，數值可在主管「設定」頁改）：
+
+- 靈獸綁姓名不綁班；課程數 = 該姓名出現在幾個班（`classes.students`）；同名學生請在名單加後綴區分。
+- 每週上限：靈氣 25、靈石入帳 40、持有 200（單門課）；2 門 ×1.5、3 門以上 ×1.8；週一 00:00（台灣）重置，第一次寫入時自動歸零。
+- 境界只升不降；老師扣靈氣最多扣到當前境界門檻。第 4／7／10／12 境要老師在學生面板按「試煉通過」，失敗冷卻 7 天（破境丹可當場重試）。
+- 靈石只能從任務拿（單一任務 ≤ 20；每班每週總額 = 人數 × 30），只能在補習班由老師操作購買。聚靈丹每週限購 1 顆。
+- 管家：麥克風只算音量不錄音；同節課第 1 次超標警告、第 2 次全班「受驚」10 分鐘（中級：加分減半、無條件進位；重級：再取消本週全班目標）；安靜 10 分鐘歸零。管家只在開啟它的那台裝置偵測，狀態寫 `beastClass` 讓投影／手機同步。
+- 撤銷：當天內、自己的紀錄（主管可撤所有人）；只有 pts／penalty／stones／goal 可撤。
+
+**部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 圖片放 `assets/beasts/`（下表）；(3) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
+
+**圖片檔名**（1024×1024、透明背景 PNG，共 71 張；ChatGPT prompt 在設定文件最後一節）：
+
+| 檔名 | 張數 | 說明 |
+|---|---|---|
+| `{key}-{1..4}.png` | 48 | 12 隻 × 4 階。`key` = qinglong 青龍、baihu 白虎、zhuque 朱雀、xuanwu 玄武、qilin 麒麟、jiuwei 九尾狐、kunpeng 鯤鵬、baize 白澤、pixiu 貔貅、xiezhi 獬豸、suanni 狻猊、kuiniu 夔牛 |
+| `steward-{1..3}.png` | 3 | 護山管家：平時／警告／懲罰 |
+| `realm-{1..12}.png` | 12 | 境界徽章（目前 UI 未使用，預留） |
+| `item-{stone,dingxin,pojing,juling,xisui,rename,hat,real}.png` | 8 | 道具圖示（目前 UI 未使用，預留） |
+
+受驚（灰階抖動）、加分、進化、招式橫幅都是 CSS 動畫，不另外出圖。
+
 ## 測試
 
 Playwright 無頭瀏覽器 + Firebase 假件（`test/mocks/`），不會碰真的 Firebase。
@@ -57,6 +99,7 @@ npm test                                                  # 全部：node test/r
 node test/contacts-admin.test.js                          # 單一檔
 ```
 
+- `beasts`：小森靈獸全流程（選獸、加分、上限、試煉、任務發放、商店、懲罰、撤銷、全班目標、設定、學生頁）
 - `auth`：主管建立、老師新增／重設／刪除、改密碼提醒、備援主管、忘記密碼
 - `journal`：班級、填日誌、歷史、停課申請、主管所有日誌
 - `contacts-teacher` / `contacts-admin`：電訪表老師端與主管端全部流程

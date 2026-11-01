@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我的靈獸 · 小森靈獸</title>
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=202611012323">
+<link rel="stylesheet" href="css/beasts.css?v=202611012323">
+<style>
+  .sv{max-width:480px;margin:0 auto;padding:20px 16px 40px;}
+  .sv-hero{text-align:center;padding:10px 0 4px;}
+  .sv-hero .beast-img{width:70%;max-width:260px;margin:0 auto;}
+  .sv-name{font-size:24px;font-weight:900;margin-top:8px;}
+  .sv-pet{color:var(--muted);font-size:14px;}
+  .sv-realm{display:inline-block;margin-top:8px;padding:4px 14px;border-radius:20px;background:rgba(255,255,255,.07);border:1px solid var(--border);font-weight:700;color:var(--gold);}
+  .sv-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0;}
+  .sv-stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center;}
+  .sv-stat b{display:block;font-size:20px;}
+  .sv-stat span{font-size:11px;color:var(--muted);}
+  .skill{display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:10px;background:var(--surface3);margin-bottom:6px;font-size:13px;}
+  .skill.locked{opacity:.4;}
+  .sv-items{display:flex;flex-wrap:wrap;gap:6px;}
+  .sv-items span{background:var(--surface3);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:12px;}
+  .sv-foot{text-align:center;font-size:11px;color:var(--muted);margin-top:20px;line-height:1.7;}
+</style>
+</head>
+<body>
+<div class="sv" id="view"><div class="empty">載入中…</div></div>
+<script type="module" src="js/beast-view.js?v=202611012323"></script>
+</body>
+</html>
