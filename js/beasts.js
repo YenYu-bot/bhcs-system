@@ -14,7 +14,8 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from
 import { REALMS, STAGE_NAMES, TRIAL_HINTS, BEASTS, BEAST_MAP, SHOP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig,
   weekKey, dayKey, monthKey, multiplier, capWeekPts, capWeekStones, capHoldStones, realmFor, realmInfo, nextRealm, progress,
   trialPending, trialCooldownLeft, newBeast, normName, rollWeek, applyPts, penaltyPts, penaltyStones, grantStones,
-  stageOf, imgSrc, imgFallback, imgScared, fmtTs, randomId } from "./beast-core.js";
+  stageOf, imgSrc, imgFallback, imgScared, fmtTs, randomId,
+  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars } from "./beast-core.js";
 import { qrSvg } from "./vendor/qr.js";
 
 const firebaseConfig = {
@@ -66,8 +67,8 @@ function authErrMsg(e) {
 const img = (b, extra = '', scared = false) => {
   const st = stageOf(b.realm), normal = imgSrc(b.beast, st), svg = imgFallback(b.beast, st);
   const fallback = `this.onerror=function(){this.onerror=null;this.src='${svg}'};this.src='${normal}';this.classList.add('fx')`;
-  return scared ? `<img class="beast-img" src="${imgScared(b.beast, st)}" onerror="${fallback}" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`
-    : `<img class="beast-img" src="${normal}" onerror="this.onerror=null;this.src='${svg}'" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`;
+  return `<div class="beast-art">${scared ? `<img class="beast-img" src="${imgScared(b.beast, st)}" onerror="${fallback}" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`
+    : `<img class="beast-img" src="${normal}" onerror="this.onerror=null;this.src='${svg}'" alt="${esc(BEAST_MAP[b.beast]?.name || '')}" ${extra}>`}</div>`;
 };
 const beastLink = id => location.origin + location.pathname.replace(/beasts\.html$/, 'beast.html') + '?t=' + id;
 
@@ -193,13 +194,13 @@ function cardHtml(b, name, pj = false) {
   if (!b) return `<div class="beast-card unassigned" data-name="${esc(name)}" onclick="openPick(this.dataset.name)"><div style="font-size:40px;margin:14px 0">🥚</div><div class="beast-name">${esc(name)}</div><div class="beast-pet">尚未選獸，點我選擇</div></div>`;
   const info = BEAST_MAP[b.beast] || BEASTS[0], r = realmInfo(b.realm), nxt = nextRealm(b.realm);
   const pend = trialPending(b);
-  const cosmetics = (b.cosmetics || []);
   const scared = scaredVisual() && !(b.items || {}).dingxin;
-  return `<div class="${pj ? 'pj-card' : 'beast-card'} stage-${r.stage} ${scared ? 'scared' : ''}" style="--c:${info.color}" data-id="${b._id}" ${pj ? '' : `onclick="openStudent('${b._id}')"`}>
-    ${cosmetics.includes('hat') ? '<span class="mark">🎩</span>' : ''}${b.julingActive ? '<span class="mark2">聚靈</span>' : ''}
+  const title = titleOf(b), stars = forgeStars(b.forge);
+  return `<div class="${pj ? 'pj-card' : 'beast-card'} stage-${r.stage} ${scared ? 'scared' : ''} ${decoClasses(b)}" style="--c:${info.color}" data-id="${b._id}" ${pj ? '' : `onclick="openStudent('${b._id}')"`}>
+    ${stars ? `<span class="forge-stars">${stars}</span>` : ''}${b.julingActive ? '<span class="mark2">聚靈</span>' : ''}
     ${img(b, '', scared)}
     <div class="beast-name">${esc(b.name)}</div>
-    <div class="beast-pet">${esc(b.petName || info.name)}${cosmetics.includes('cloud') ? ' ☁️' : ''}</div>
+    <div class="beast-pet">${esc(b.petName || info.name)}</div>${title ? `<div class="beast-title">${esc(title)}</div>` : ''}
     <div class="beast-realm ${pend ? 'trial' : ''}">${r.name}${pend ? ' · 待試煉' : ''}</div>
     <div class="progress"><div class="progress-bar" style="width:${Math.round(progress(b.pts, b.realm) * 100)}%"></div></div>
     <div class="beast-foot"><span>${b.pts}${nxt ? '/' + nxt.pts : ''} 靈氣</span><span class="stone">💎 ${b.stones || 0}</span></div>
@@ -376,13 +377,66 @@ window.buy = async function (beastId, key) {
       if ((b.stones || 0) < price) return { abort: `靈石不足（需要 ${price}）` };
       if (item.weeklyLimit && (wb[key] || 0) >= item.weeklyLimit) return { abort: '本週已買過，每週限購 1 顆' };
       const patch = { ...rolled, stones: b.stones - price, weekBuys: { ...wb, [key]: (wb[key] || 0) + 1 } };
-      if (item.kind === 'cosmetic') { if ((b.cosmetics || []).includes(key)) return { abort: '已經有這個飾品' }; patch.cosmetics = [...(b.cosmetics || []), key]; }
-      else if (item.kind === 'rename') patch.petName = petName;
+      if (item.kind === 'rename') patch.petName = petName;
       else if (key === 'juling') patch.julingActive = true;
       else patch.items = { ...(b.items || {}), [key]: ((b.items || {})[key] || 0) + 1 };
       return { patch, log: { type: 'buy', stones: -price, reason: `購買 ${item.name}${petName ? '：' + petName : ''}` }, stat: ['stonesSpent', price] };
     }, { touchClass: true });
     if (r.aborted) showToast(r.aborted, 'error'); else showToast(`已購買 ${item.name}`);
+  } catch (e) { console.error(e); showToast('失敗：' + authErrMsg(e), 'error'); }
+};
+// ── 裝扮（DECO）與鍛體（增強）──
+const decoPrice = id => (cfg.shopPrice || {})[id] ?? DECO_MAP[id]?.price ?? 0;
+const SWATCH = { 'dye-frost': '#9ed8ff', 'dye-shadow': '#2a2d44', 'dye-gold': '#f6c343', 'dye-rainbow': 'conic-gradient(#ff6b6b,#f6c343,#4ecb8d,#4fd1e0,#7c5cff,#ff6b6b)',
+  'aura-jade': '#4ecb8d', 'aura-violet': '#b58cf5', 'aura-gold': '#f6c343', 'aura-flame': '#ff6b6b', 'stand-cloud': '#ffffff', 'stand-jade': '#2f9d74', 'stand-lotus': '#ff8fc6', 'stand-gold': '#e0a419',
+  'frame-bronze': '#b87333', 'frame-silver': '#d7dde5', 'frame-gold': '#f6c343', 'frame-rainbow': 'conic-gradient(#ff6b6b,#f6c343,#4ecb8d,#4fd1e0,#7c5cff,#ff6b6b)',
+  'bg-bamboo': '#2f9d74', 'bg-sea': '#2b8ea0', 'bg-sakura': '#d97aa8', 'bg-night': '#3b3f6b' };
+function decoHtml(b) {
+  const owned = b.decoOwned || [], equip = b.equip || {}, id = b._id;
+  return DECO_CATS.map(c => `<div class="deco-cat"><div class="deco-cat-title">${c.name}<span>${c.desc}</span></div><div class="deco-row">${DECO.filter(d => d.cat === c.key).map(d => {
+    const has = owned.includes(d.id), on = equip[c.key] === d.id, price = decoPrice(d.id);
+    const sw = c.key === 'title' ? '' : `<span class="sw" style="background:${SWATCH[d.id] || '#888'}"></span>`;
+    return has ? `<button class="deco-chip owned ${on ? 'on' : ''}" onclick="equipDeco('${id}','${c.key}','${on ? '' : d.id}')">${sw}${esc(d.name)} ${on ? '✓ 裝備中' : '・裝備'}</button>`
+      : `<button class="deco-chip" ${(b.stones || 0) < price ? 'disabled' : ''} onclick="buyDeco('${id}','${d.id}')">${sw}${esc(d.name)} <span class="pr">💎${price}</span></button>`;
+  }).join('')}</div></div>`).join('');
+}
+function forgeHtml(b) {
+  const lv = b.forge || 0, cost = forgeCost(lv);
+  return `<div class="forge-box"><div style="flex:1"><div class="si-name">🔨 鍛體 Lv.${lv}/${FORGE_MAX} ${forgeStars(lv) ? `<span style="color:var(--gold)">${forgeStars(lv)}</span>` : ''}</div>
+    <div class="si-desc">每級多一顆星；5 級閃光、10 級「極」。純展示，不影響靈氣。</div></div>
+    ${lv >= FORGE_MAX ? '<span class="si-own">已滿級</span>' : `<span class="si-price">💎 ${cost}</span><button class="btn btn-teal btn-sm" ${(b.stones || 0) < cost ? 'disabled' : ''} onclick="forgeUp('${b._id}')">鍛體</button>`}</div>`;
+}
+window.buyDeco = async function (beastId, decoId) {
+  const d = DECO_MAP[decoId]; if (!d) return; const price = decoPrice(decoId);
+  try {
+    const r = await tx(beastId, b => {
+      if ((b.decoOwned || []).includes(decoId)) return { abort: '已經擁有' };
+      if ((b.stones || 0) < price) return { abort: `靈石不足（需要 ${price}）` };
+      return { patch: { ...rollWeek(b), stones: b.stones - price, decoOwned: [...(b.decoOwned || []), decoId], equip: { ...(b.equip || {}), [d.cat]: decoId } },
+        log: { type: 'buy', stones: -price, reason: `購買裝扮：${DECO_CATS.find(c => c.key === d.cat).name}・${d.name}` }, stat: ['stonesSpent', price] };
+    }, { touchClass: true });
+    if (r.aborted) showToast(r.aborted, 'error'); else showToast(`已購買並裝備「${d.name}」`);
+  } catch (e) { console.error(e); showToast('失敗：' + authErrMsg(e), 'error'); }
+};
+window.equipDeco = async function (beastId, cat, decoId) {
+  try {
+    const r = await tx(beastId, b => {
+      if (decoId && !(b.decoOwned || []).includes(decoId)) return { abort: '尚未擁有' };
+      const equip = { ...(b.equip || {}) }; if (decoId) equip[cat] = decoId; else delete equip[cat];
+      return { patch: { equip } };
+    });
+    if (r.aborted) showToast(r.aborted, 'error');
+  } catch (e) { console.error(e); showToast('失敗：' + authErrMsg(e), 'error'); }
+};
+window.forgeUp = async function (beastId) {
+  try {
+    const r = await tx(beastId, b => {
+      const lv = b.forge || 0, cost = forgeCost(lv);
+      if (lv >= FORGE_MAX) return { abort: '已滿級' };
+      if ((b.stones || 0) < cost) return { abort: `靈石不足（需要 ${cost}）` };
+      return { patch: { ...rollWeek(b), stones: b.stones - cost, forge: lv + 1 }, log: { type: 'buy', stones: -cost, reason: `鍛體 Lv.${lv} → Lv.${lv + 1}` }, stat: ['stonesSpent', cost], extra: lv + 1 };
+    }, { touchClass: true });
+    if (r.aborted) showToast(r.aborted, 'error'); else showToast(r.extra >= FORGE_MAX ? '鍛體滿級：極！' : `鍛體升到 Lv.${r.extra}`);
   } catch (e) { console.error(e); showToast('失敗：' + authErrMsg(e), 'error'); }
 };
 window.buyReal = async function (beastId, idx) {
@@ -510,12 +564,13 @@ function renderStudent(full = true) {
        ${!pend ? `<div>靈氣 ${b.pts}/${nt.pts}，尚未達門檻。</div>` : cd > 0 ? `<div>上次未通過，冷卻剩 ${Math.ceil(cd / 86400000)} 天。${(b.items || {}).pojing ? `<button class="btn btn-purple btn-sm" onclick="usePojing('${id}')">用破境丹當場重試（剩 ${b.items.pojing}）</button>` : ''}</div>` :
        `<div style="display:flex;gap:10px"><button class="btn btn-teal" onclick="trial('${id}',true)">✅ 通過</button><button class="btn btn-ghost" onclick="trial('${id}',false)">❌ 未通過</button></div>`}</div>`;
   } else if (stTab === 'shop') {
-    const own = k => { const s = SHOP_MAP[k]; if (s.kind === 'cosmetic') return (b.cosmetics || []).includes(k) ? '已擁有' : ''; if (s.kind === 'item') return (b.items || {})[k] ? `持有 ${b.items[k]}` : ''; if (k === 'juling') return b.julingActive ? '生效中' : ''; return ''; };
+    const own = k => { const s = SHOP_MAP[k]; if (s.kind === 'item') return (b.items || {})[k] ? `持有 ${b.items[k]}` : ''; if (k === 'juling') return b.julingActive ? '生效中' : ''; return ''; };
     const price = k => (cfg.shopPrice || {})[k] ?? SHOP_MAP[k].price;
-    $('st-shop').innerHTML = `<div class="hint" style="margin:0 0 10px">購買只在補習班由老師操作；學生 QR 頁只能看。持有上限 ${capHoldStones(b.courseCount, cfg)} 靈石。</div>
+    $('st-shop').innerHTML = `<div class="hint" style="margin:0 0 10px">購買只在補習班由老師操作；學生可在 QR 頁的衣櫃自己換已擁有的裝扮。持有上限 ${capHoldStones(b.courseCount, cfg)} 靈石。</div>
       <div class="shop-list">${SHOP.map(s => `<div class="shop-item"><div style="flex:1"><div class="si-name">${s.name}</div><div class="si-desc">${s.desc}</div></div><span class="si-own">${own(s.key)}</span><span class="si-price">💎 ${price(s.key)}</span><button class="btn btn-teal btn-sm" ${(b.stones || 0) < price(s.key) ? 'disabled' : ''} onclick="buy('${id}','${s.key}')">買</button></div>`).join('')}
       ${cfg.realReward.map((rw, i) => `<div class="shop-item"><div style="flex:1"><div class="si-name">🎁 ${esc(rw.label)}</div><div class="si-desc">現實獎勵，由發放老師兌現</div></div><span class="si-price">💎 ${rw.price}</span><button class="btn btn-purple btn-sm" ${(b.stones || 0) < rw.price ? 'disabled' : ''} onclick="buyReal('${id}',${i})">兌換</button></div>`).join('')}</div>
-      <div class="custom-row" style="margin-top:14px">${!b.swapUsed && b.realm <= cfg.swapFreeMaxRealm ? `<button class="btn btn-ghost btn-sm" onclick="startSwap('${id}','free')">🔁 免費換獸（保留進度，限一次）</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="startSwap('${id}','reset')">♻️ 重新開始換獸（歸零）</button></div>`;
+      <div class="custom-row" style="margin-top:14px">${!b.swapUsed && b.realm <= cfg.swapFreeMaxRealm ? `<button class="btn btn-ghost btn-sm" onclick="startSwap('${id}','free')">🔁 免費換獸（保留進度，限一次）</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="startSwap('${id}','reset')">♻️ 重新開始換獸（歸零）</button></div>
+      ${forgeHtml(b)}${decoHtml(b)}`;
   } else if (stTab === 'log') {
     const today = dayKey();
     $('st-log').innerHTML = `<div class="log-list">${openLogs.map(l => {
@@ -687,7 +742,6 @@ function renderProjector() {
   $('pjTitle').textContent = cls.name;
   const g = classState.goal || {}; $('pjGoal').textContent = g.weekKey === weekKey() && g.text ? `🎯 本週目標：${g.text}${g.doneWeek === weekKey() ? ' ✅' : ''}` : '';
   const n = (cls.students || []).length; $('pjGrid').style.setProperty('--pjw', n > 30 ? '120px' : n > 16 ? '150px' : '190px');
-  const bg = Object.values(beasts).some(b => (b.cosmetics || []).includes('bg'));
   $('pjGrid').innerHTML = (cls.students || []).map(nm => { const b = beasts[normName(nm)]; return b ? cardHtml(b, nm, true) : `<div class="pj-card"><div style="font-size:48px;margin:20px 0">🥚</div><div class="beast-name">${esc(nm)}</div></div>`; }).join('');
   renderStewardRemote();
   animateDiff('#pjGrid');
@@ -706,7 +760,8 @@ function renderConfig() {
   const capLabels = { weekPts: '每週靈氣上限', weekStones: '每週靈石入帳上限', holdStones: '持有靈石上限', taskMax: '單一任務最多靈石', classWeekPerStudent: '每班每週總額（×人數）', penaltyPtsMax: '單次最多扣靈氣', penaltyStonesMax: '單次最多扣靈石', classGoalPts: '全班目標每人加' };
   $('cfgCaps').innerHTML = Object.entries(capLabels).map(([k, l]) => `<label>${l}<input type="number" data-cap="${k}" value="${cfg.caps[k]}"></label>`).join('');
   [0, 1, 2].forEach(i => $('mult' + i).value = cfg.mult[i]);
-  $('cfgShop').innerHTML = SHOP.map(s => `<div class="cfg-row"><span style="flex:1;font-size:13px">${s.name}<span class="hint" style="margin:0 0 0 8px;display:inline">${s.desc}</span></span><input class="field-input" type="number" data-shop="${s.key}" value="${(cfg.shopPrice || {})[s.key] ?? s.price}"></div>`).join('');
+  $('cfgShop').innerHTML = SHOP.map(s => `<div class="cfg-row"><span style="flex:1;font-size:13px">${s.name}<span class="hint" style="margin:0 0 0 8px;display:inline">${s.desc}</span></span><input class="field-input" type="number" data-shop="${s.key}" value="${(cfg.shopPrice || {})[s.key] ?? s.price}"></div>`).join('')
+    + DECO_CATS.map(c => `<div class="hint" style="margin:10px 0 4px;font-weight:700">裝扮・${c.name}</div>` + DECO.filter(d => d.cat === c.key).map(d => `<div class="cfg-row"><span style="flex:1;font-size:13px">${esc(d.name)}</span><input class="field-input" type="number" data-shop="${d.id}" value="${(cfg.shopPrice || {})[d.id] ?? d.price}"></div>`).join('')).join('');
   const stL = { dbAbove: '門檻：環境音 + dB', holdSec: '持續秒數', cooldownSec: '冷卻秒數', resetMin: '安靜幾分鐘歸零', scaredMin: '受驚持續分鐘' };
   $('cfgSteward').innerHTML = Object.entries(stL).map(([k, l]) => `<label>${l}<input type="number" step="0.5" data-st="${k}" value="${cfg.steward[k]}"></label>`).join('') + `<label>預設懲罰<select data-st="level" style="background:var(--surface);color:var(--text);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px"><option value="light" ${cfg.steward.level === 'light' ? 'selected' : ''}>輕</option><option value="mid" ${cfg.steward.level === 'mid' ? 'selected' : ''}>中</option><option value="heavy" ${cfg.steward.level === 'heavy' ? 'selected' : ''}>重</option></select></label>`;
   const th = cfg.thresholds || REALMS.map(r => r.pts);
@@ -747,5 +802,5 @@ async function loadReport() {
 async function loadHall() {
   const snap = await getDocs(query(collection(db, 'beasts'), where('hall', '==', true))).catch(() => null);
   const list = (snap?.docs || []).map(d => ({ _id: d.id, ...d.data() }));
-  $('hallGrid').innerHTML = list.length ? list.map(b => `<div class="beast-card stage-4" style="--c:${BEAST_MAP[b.beast]?.color}">${img(b)}<div class="beast-name">${esc(b.name)}</div><div class="beast-pet">${esc(b.petName || BEAST_MAP[b.beast]?.name)} · ${BEAST_MAP[b.beast]?.ultimate}</div><div class="beast-realm trial">大羅金仙</div></div>`).join('') : '<div class="empty">尚無人登頂</div>';
+  $('hallGrid').innerHTML = list.length ? list.map(b => `<div class="beast-card stage-4 ${decoClasses(b)}" style="--c:${BEAST_MAP[b.beast]?.color}">${img(b)}<div class="beast-name">${esc(b.name)}</div><div class="beast-pet">${esc(b.petName || BEAST_MAP[b.beast]?.name)} · ${BEAST_MAP[b.beast]?.ultimate}</div><div class="beast-realm trial">大羅金仙</div></div>`).join('') : '<div class="empty">尚無人登頂</div>';
 }

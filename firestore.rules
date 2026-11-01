@@ -155,10 +155,16 @@ service cloud.firestore {
     // 靈獸：文件 id 是隨機 token，也是學生 QR 連結的鑰匙
     //   get 開放（學生頁無登入），list 只給職員（不能列舉別人的 token）
     //   新增／修改：職員（加分、扣分、試煉、購買都在這裡；上限由前端交易處理）；刪除：主管
+    //   學生頁（知道 token、未登入）只能換裝：只改 equip，且裝備的必須是自己已擁有的（decoOwned）
     match /beasts/{id} {
       allow get: if true;
       allow list: if isStaff();
-      allow create, update: if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['equip','updatedAt'])
+        && request.resource.data.equip is map
+        && request.resource.data.equip.keys().hasOnly(['dye','aura','stand','frame','bg','title'])
+        && request.resource.data.equip.values().hasOnly(resource.data.get('decoOwned', [])));
       allow delete: if isAdmin();
       // 紀錄：知道 token 的人可讀（學生頁顯示紀錄）；職員新增；撤銷只能改 undone 相關欄位；刪除限主管
       match /log/{lid} {

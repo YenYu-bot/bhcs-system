@@ -77,10 +77,10 @@
 .custom-row input[type=number]{width:80px;flex:none;}
 .shop-list{display:grid;gap:8px;}
 .shop-item{display:flex;align-items:center;gap:10px;background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
-.shop-item .si-name{font-weight:700;font-size:13px;}
-.shop-item .si-desc{font-size:11px;color:var(--muted);}
-.shop-item .si-price{color:var(--stone);font-weight:900;white-space:nowrap;}
-.shop-item .si-own{font-size:11px;color:var(--teal);white-space:nowrap;}
+.shop-item .si-name,.forge-box .si-name{font-weight:700;font-size:13px;}
+.shop-item .si-desc,.forge-box .si-desc{font-size:11px;color:var(--muted);}
+.shop-item .si-price,.forge-box .si-price{color:var(--stone);font-weight:900;white-space:nowrap;}
+.shop-item .si-own,.forge-box .si-own{font-size:11px;color:var(--teal);white-space:nowrap;}
 .log-list{display:grid;gap:6px;max-height:360px;overflow-y:auto;}
 .log-row{display:flex;gap:10px;align-items:center;font-size:12px;background:var(--surface3);border-radius:8px;padding:8px 10px;}
 .log-row.undone{opacity:.45;text-decoration:line-through;}
@@ -162,3 +162,58 @@ table.rep th:first-child,table.rep td:first-child{text-align:left;}
 .pj-banner small{display:block;font-size:20px;color:var(--gold);margin-top:6px;}
 @keyframes bannerIn{0%{transform:translate(-50%,-50%) scale(.6);opacity:0}15%{transform:translate(-50%,-50%) scale(1.1);opacity:1}80%{opacity:1}100%{opacity:0}}
 .pj-fx{position:absolute;inset:0;pointer-events:none;border-radius:16px;animation:spinGlow 1s ease-out;}
+
+/* ── 裝扮（DECO）：卡片根元素帶 .d-<id>；靈染／靈光／台座作用在 .beast-art，卡框／背景作用在卡片本身 ── */
+.beast-art{position:relative;}
+.beast-art .beast-img{position:relative;z-index:1;}
+.beast-art::before{content:'';position:absolute;inset:6% 10% 14%;border-radius:50%;background:radial-gradient(circle,var(--aura,transparent) 0%,transparent 68%);opacity:0;z-index:0;pointer-events:none;}
+.beast-art::after{content:'';position:absolute;left:18%;right:18%;bottom:3%;height:12%;border-radius:50%;background:var(--stand,transparent);opacity:0;z-index:0;pointer-events:none;}
+/* 靈染（色違） */
+.d-dye-frost .beast-art{filter:hue-rotate(180deg) saturate(.75) brightness(1.12);}
+.d-dye-shadow .beast-art{filter:brightness(.68) contrast(1.35) saturate(.55);}
+.d-dye-gold .beast-art{filter:sepia(.85) saturate(2.6) hue-rotate(-12deg) brightness(1.06);}
+.d-dye-rainbow .beast-art{animation:dyeRainbow 6s linear infinite;}
+@keyframes dyeRainbow{from{filter:hue-rotate(0deg) saturate(1.3)}to{filter:hue-rotate(360deg) saturate(1.3)}}
+/* 靈光 */
+.d-aura-jade .beast-art::before{--aura:rgba(78,203,141,.75);opacity:1;}
+.d-aura-violet .beast-art::before{--aura:rgba(181,140,245,.75);opacity:1;}
+.d-aura-gold .beast-art::before{--aura:rgba(246,195,67,.8);opacity:1;}
+.d-aura-flame .beast-art::before{--aura:rgba(255,107,107,.85);opacity:1;animation:auraPulse 1.6s ease-in-out infinite;}
+@keyframes auraPulse{0%,100%{transform:scale(.92);opacity:.7}50%{transform:scale(1.08);opacity:1}}
+/* 台座 */
+.d-stand-cloud .beast-art::after{--stand:radial-gradient(ellipse at center,#fff 0%,rgba(255,255,255,.75) 45%,transparent 72%);opacity:1;height:16%;}
+.d-stand-jade .beast-art::after{--stand:radial-gradient(ellipse at center,#7ee2b8 0%,#2f9d74 55%,transparent 75%);opacity:.95;}
+.d-stand-lotus .beast-art::after{--stand:radial-gradient(ellipse at center,#ffd6ea 0%,#ff8fc6 50%,transparent 76%);opacity:1;height:15%;}
+.d-stand-gold .beast-art::after{--stand:radial-gradient(ellipse at center,#fff3b0 0%,#e0a419 55%,transparent 76%);opacity:1;box-shadow:0 0 14px rgba(246,195,67,.6);}
+/* 卡框 */
+.d-frame-bronze{border:2px solid #b87333 !important;}
+.d-frame-silver{border:2px solid #d7dde5 !important;box-shadow:0 0 10px rgba(215,221,229,.25);}
+.d-frame-gold{border:2px solid #f6c343 !important;box-shadow:0 0 14px rgba(246,195,67,.35);}
+@property --fr{syntax:'<angle>';inherits:false;initial-value:0deg;}
+.d-frame-rainbow{border:2px solid transparent !important;background:linear-gradient(var(--surface),var(--surface)) padding-box,conic-gradient(from var(--fr),#ff6b6b,#f6c343,#4ecb8d,#4fd1e0,#7c5cff,#ff9ecf,#ff6b6b) border-box !important;animation:frameSpin 4s linear infinite;}
+@keyframes frameSpin{to{--fr:360deg}}
+/* 背景（疊在卡片底色上，壓低亮度讓字看得清楚） */
+.d-bg-bamboo{background-image:linear-gradient(180deg,rgba(78,203,141,.22),rgba(22,27,34,.0) 70%) !important;}
+.d-bg-sea{background-image:linear-gradient(180deg,rgba(79,209,224,.24),rgba(22,27,34,0) 70%) !important;}
+.d-bg-sakura{background-image:linear-gradient(180deg,rgba(255,158,207,.24),rgba(22,27,34,0) 70%) !important;}
+.d-bg-night{background-image:radial-gradient(1px 1px at 20% 18%,#fff,transparent),radial-gradient(1px 1px at 70% 30%,#fff,transparent),radial-gradient(1.5px 1.5px at 40% 8%,#fff,transparent),radial-gradient(1px 1px at 85% 12%,#fff,transparent),linear-gradient(180deg,rgba(108,123,217,.35),rgba(22,27,34,0) 72%) !important;}
+.d-frame-rainbow.d-bg-bamboo,.d-frame-rainbow.d-bg-sea,.d-frame-rainbow.d-bg-sakura,.d-frame-rainbow.d-bg-night{background-clip:padding-box,border-box;}
+/* 稱號 */
+.beast-title{display:inline-block;font-size:10px;font-weight:900;color:#1a1a1a;background:linear-gradient(90deg,#ffe6a3,#f6c343);border-radius:8px;padding:1px 7px;margin-top:3px;}
+/* 鍛體 */
+.forge-stars{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--gold);letter-spacing:-1px;text-shadow:0 1px 3px rgba(0,0,0,.7);z-index:2;white-space:nowrap;}
+.forge-10 .forge-stars{font-size:13px;font-weight:900;background:linear-gradient(90deg,#ff6b6b,#f6c343);color:#fff;border-radius:8px;padding:0 6px;letter-spacing:0;}
+.forge-5 .beast-art .beast-img{animation:forgeShine 3s ease-in-out infinite;}
+@keyframes forgeShine{0%,100%{filter:brightness(1)}50%{filter:brightness(1.18) drop-shadow(0 0 6px rgba(255,255,255,.6))}}
+/* 學生面板／商店的裝扮列表 */
+.deco-cat{margin-top:14px;}
+.deco-cat-title{font-size:12px;font-weight:900;color:var(--teal);margin-bottom:6px;}
+.deco-cat-title span{font-weight:400;color:var(--muted);margin-left:6px;}
+.deco-row{display:flex;flex-wrap:wrap;gap:8px;}
+.deco-chip{display:flex;align-items:center;gap:6px;background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;cursor:pointer;}
+.deco-chip .sw{width:18px;height:18px;border-radius:50%;flex:none;}
+.deco-chip .pr{color:var(--stone);font-weight:900;}
+.deco-chip.owned{border-color:rgba(86,204,178,.35);}
+.deco-chip.on{border-color:var(--gold);background:rgba(246,195,67,.12);}
+.deco-chip[disabled]{opacity:.4;cursor:not-allowed;}
+.forge-box{display:flex;align-items:center;gap:12px;background:var(--surface3);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-top:14px;}

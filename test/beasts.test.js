@@ -69,13 +69,21 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   await page.click('#tabs .tab:has-text("課堂")'); await wait(200);
   await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(300);
   await page.click('#smTabs .tab:has-text("商店")'); await wait(200);
-  ok(await page.locator('#st-shop .shop-item:has-text("仙帽") button').isDisabled(), 'cannot afford hat');
+  ok(await page.locator('#st-shop .deco-chip:has-text("青銅")').isDisabled(), 'cannot afford bronze frame');
   await t.seed(() => { Object.values(window.__store.beasts)[0].stones = 100; window.__notify(); });
   await wait(300);
-  await page.click('#st-shop .shop-item:has-text("仙帽") button'); await wait(300);
-  b = await beast(); eq([b.stones, b.cosmetics], [90, ['hat']], 'hat bought');
+  await page.click('#st-shop .deco-chip:has-text("青銅")'); await wait(300);
+  b = await beast(); eq([b.stones, b.decoOwned, b.equip], [80, ['frame-bronze'], { frame: 'frame-bronze' }], 'bronze frame bought + equipped');
+  ok(await page.locator('#beastGrid .beast-card.d-frame-bronze').count() === 1, 'frame shows on card');
+  await page.click('#st-shop .deco-chip:has-text("小學霸")'); await wait(300);
+  b = await beast(); eq([b.stones, b.equip.title], [65, 'title-scholar'], 'title bought');
+  await page.click('#st-shop .deco-chip:has-text("小學霸")'); await wait(300);
+  b = await beast(); eq(b.equip.title, undefined, 'title unequipped');
+  await page.click('#st-shop .forge-box button'); await wait(300);
+  b = await beast(); eq([b.stones, b.forge], [45, 1], 'forge lv1 (-20)');
+  await t.seed(() => { Object.values(window.__store.beasts)[0].stones = 100; window.__notify(); }); await wait(300);
   await page.click('#st-shop .shop-item:has-text("聚靈丹") button'); await wait(300);
-  b = await beast(); eq([b.stones, b.julingActive], [50, true], 'juling bought');
+  b = await beast(); eq([b.stones, b.julingActive], [60, true], 'juling bought');
   await page.click('#st-shop .shop-item:has-text("聚靈丹") button'); await wait(300);
   includes(await toast(), '限購', 'weekly limit');
   await page.click('#smTabs .tab:has-text("加分")'); await wait(200);
@@ -87,12 +95,12 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   await page.click('#st-penalty .reason-btn:has-text("扣 3")'); await wait(300);
   b = await beast(); eq(b.pts, 97, 'penalty -3');
   await page.selectOption('#pnKind', 'stones'); await page.click('#st-penalty .reason-btn:has-text("扣 5")'); await wait(300);
-  b = await beast(); eq(b.stones, 45, 'penalty -5 stones');
+  b = await beast(); eq(b.stones, 55, 'penalty -5 stones');
   await page.click('#smTabs .tab:has-text("紀錄")'); await wait(300);
   const rows = page.locator('#st-log .log-row');
   ok((await rows.count()) >= 8, 'log rows');
   await rows.filter({ hasText: '遲到' }).first().locator('button:has-text("撤銷")').click(); await wait(400);
-  b = await beast(); eq(b.stones, 50, 'stones penalty undone (latest 遲到 row)');
+  b = await beast(); eq(b.stones, 60, 'stones penalty undone (latest 遲到 row)');
   await page.click('#studentModal >> text=✕'); await wait(200);
 
   // 全班目標：+2 不受上限
@@ -117,8 +125,15 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   await page.goto(page.url().replace(/beasts\.html.*$/, '') + 'beast.html?t=' + bid); await wait(500);
   const txt = await page.locator('#view').textContent();
   includes(txt, '甲 的本命靈獸', 'student page name'); includes(txt, '元嬰', 'student page realm'); includes(txt, '99', 'student page pts');
-  includes(txt, '仙帽', 'student page cosmetics'); includes(txt, '作業全交', 'student page log');
-  ok(!(await page.locator('#view button').count()), 'student page has no buttons');
+  includes(txt, '鍛體 Lv.1', 'student page forge'); includes(txt, '作業全交', 'student page log');
+  ok(await page.locator('#view .sv-hero.d-frame-bronze').count() === 1, 'student page shows frame');
+  // 衣櫃：只有已擁有的能換；點青銅（裝備中）→ 卸下
+  eq(await page.locator('#view .deco-chip').count(), 2, 'wardrobe lists owned only (青銅、小學霸)');
+  await page.click('#view .deco-chip:has-text("小學霸")'); await wait(300);
+  eq((await t.store()).beasts[bid].equip.title, 'title-scholar', 'student equips title at home');
+  await page.click('#view .deco-chip:has-text("青銅")'); await wait(300);
+  eq((await t.store()).beasts[bid].equip.frame, undefined, 'student unequips frame');
+  eq((await t.store()).beasts[bid].stones, 60, 'wardrobe never spends stones');
 
   log('beasts test OK');
   await t.finish();
