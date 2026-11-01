@@ -58,7 +58,8 @@
 | `js/beast-view.js` | 學生頁 |
 | `js/vendor/qr.js` | 自寫 QR 產生器（版本 1–6，夠放學生連結） |
 | `assets/beasts/` | 系統用圖：512×512 透明 PNG（256 色量化，每張約 50–100 KB）。找不到 PNG 時自動用同名 `*.svg` 佔位圖（`python3 tools/make-beast-placeholders.py` 重新產生） |
-| `assets/beasts-src/` | ChatGPT 產出的白底設定圖原稿（15 張）＋生成 prompt。改圖後執行 `python3 tools/split-beast-sheets.py assets/beasts-src` 重新去背、切圖、量化 |
+| `assets/beasts-src/v2/` | **現行**：ChatGPT 產出的透明等寬分格圖（日系可愛風）。放進來後執行 `python3 tools/split-beast-sheets.py --v2 assets/beasts-src/v2` 切圖、量化 |
+| `assets/beasts-src/v1/` | 第一版寫實水墨風原稿（含受驚 24 張），已淘汰：30 隻排成一班時太吵。留作參考，`split-beast-sheets.py`（不帶 `--v2`）可重切 |
 
 | 集合 | 內容 |
 |---|---|
@@ -79,12 +80,12 @@
 
 **部署**：(1) `firestore.rules` 全文重新貼到 Firebase 主控台並發布；(2) 改了 css/ 或 js/ 執行 `python3 tools/bump-version.py`。
 
-**圖片檔名**（共 119 張；要換圖就把新的設定圖放進 `assets/beasts-src/`（檔名開頭 `01-`～`15-`）再跑切圖工具）：
+**圖片檔名**（共 119 張；v2 重繪中，目前全是 SVG 佔位圖。ChatGPT 產出的分格圖存成 `01-qinglong.png`…`12-bastet.png`、`s01-qinglong.png`…（受驚）、`13-badges.png`、`14-steward.png`、`15-items.png` 放進 `assets/beasts-src/v2/` 再跑切圖工具）：
 
 | 檔名 | 張數 | 說明 |
 |---|---|---|
-| `{key}-{1..4}.png` | 48 | 12 隻 × 4 階。`key` = qinglong 青龍、baihu 白虎、zhuque 朱雀、xuanwu 玄武、qilin 麒麟、jiuwei 九尾狐、kunpeng 鯤鵬、baize 白澤、pixiu 貔貅、xiezhi 獬豸、suanni 狻猊、kuiniu 夔牛 |
-| `{key}-{1..4}-scared.png` | 48 | 受驚態（管家懲罰時顯示）；某隻還沒有就退回一般圖加灰階抖動。來源：`assets/beasts-src/scared/`，`python3 tools/import-scared.py <資料夾>` 匯入 |
+| `{key}-{1..4}.png` | 48 | 12 隻 × 4 階。`key` = qinglong 青龍、zhuque 朱雀、qilin 麒麟、jiuwei 九尾狐、orochi 八岐大蛇、baku 夢貘、angel 小天使、mermaid 人魚、unicorn 獨角獸、griffin 獅鷲、fenrir 芬里爾、bastet 巴斯特貓 |
+| `{key}-{1..4}-scared.png` | 48 | 受驚態（管家懲罰時顯示）；某隻還沒有就退回一般圖加灰階抖動 |
 | `steward-{1..3}.png` | 3 | 護山管家：平時／警告／懲罰 |
 | `realm-{1..12}.png` | 12 | 境界徽章（目前 UI 未使用，預留） |
 | `item-{stone,dingxin,pojing,juling,xisui,rename,hat,real}.png` | 8 | 道具圖示（目前 UI 未使用，預留） |

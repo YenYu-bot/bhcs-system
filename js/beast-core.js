@@ -25,21 +25,21 @@ export const TRIAL_HINTS = {
   12: '大羅金仙：老師依綜合表現核定',
 };
 
-// ── 12 隻本命靈獸 ──
-// key = 圖檔名前綴（assets/beasts/{key}-{1..4}.png）；color = 屬性主色（招式特效、進度條）
+// ── 12 隻本命靈獸（v2：日系可愛 × 萬界神獸；主色平均分布在色環上，整班排在一起才協調）──
+// key = 圖檔名前綴（assets/beasts/{key}-{1..4}.png、{key}-{1..4}-scared.png）；color = 主色（進度條、招式特效）
 export const BEASTS = [
-  { key: 'qinglong', name: '青龍',  attr: '木・東',   color: '#2ecc71', talent: '生生不息', skills: ['青藤纏', '龍吟震', '萬木回春', '蒼龍出海'], ultimate: '青龍蔽天', fit: '沉穩領袖' },
-  { key: 'baihu',    name: '白虎',  attr: '金・西',   color: '#f1c40f', talent: '破甲',     skills: ['金爪', '虎嘯山林', '白金裂空', '萬劍歸宗'], ultimate: '白虎鎮西', fit: '勇猛衝刺' },
-  { key: 'zhuque',   name: '朱雀',  attr: '火・南',   color: '#e74c3c', talent: '涅槃',     skills: ['星火', '赤羽', '焚天翼', '涅槃重生'],     ultimate: '南明離火', fit: '熱情愛表現' },
-  { key: 'xuanwu',   name: '玄武',  attr: '水・北',   color: '#3498db', talent: '不動如山', skills: ['水盾', '玄甲', '北冥潮', '龜蛇合一'],     ultimate: '玄冥真水', fit: '堅毅穩定' },
-  { key: 'qilin',    name: '麒麟',  attr: '土・祥瑞', color: '#f39c12', talent: '祥瑞',     skills: ['踏雲', '麟火', '瑞氣千條', '仁獸降福'],   ultimate: '麒麟踏世', fit: '溫和全能' },
-  { key: 'jiuwei',   name: '九尾狐', attr: '幻',      color: '#9b59b6', talent: '一尾一命', skills: ['狐火', '幻影分身', '魅影迷陣', '九尾天狐'], ultimate: '九尾通天', fit: '聰慧靈巧' },
-  { key: 'kunpeng',  name: '鯤鵬',  attr: '水→風',   color: '#1abc9c', talent: '化鯤為鵬', skills: ['潛淵', '北冥巨浪', '扶搖直上', '水擊三千里'], ultimate: '逍遙遊', fit: '大器晚成' },
-  { key: 'baize',    name: '白澤',  attr: '智',       color: '#ecf0f1', talent: '通曉萬物', skills: ['明察', '識百獸', '萬象圖', '白澤圖錄'],     ultimate: '知天下', fit: '好問學霸' },
-  { key: 'pixiu',    name: '貔貅',  attr: '財・土',   color: '#d4a017', talent: '只進不出', skills: ['吞金', '聚寶', '鎮宅', '招財進寶'],       ultimate: '萬寶歸宗', fit: '愛收集累積' },
-  { key: 'xiezhi',   name: '獬豸',  attr: '正',       color: '#95a5a6', talent: '明辨是非', skills: ['獨角觸邪', '明鏡', '公正之角', '天道審判'], ultimate: '法天正道', fit: '正直守規矩' },
-  { key: 'suanni',   name: '狻猊',  attr: '靜・煙',   color: '#e67e22', talent: '心如止水', skills: ['靜心煙', '獅子吼', '定神陣', '金獅護法'],   ultimate: '萬籟俱寂', fit: '專注安靜' },
-  { key: 'kuiniu',   name: '夔牛',  attr: '雷',       color: '#8e44ad', talent: '一足震雷', skills: ['雷鳴', '震地', '雷鼓', '夔鼓震天'],       ultimate: '雷動九天', fit: '爆發行動派' },
+  { key: 'qinglong', name: '青龍',   origin: '東方', attr: '木',     color: '#4ecb8d', talent: '生生不息', skills: ['青藤纏', '龍吟', '萬木回春', '蒼龍出海'],       ultimate: '青龍蔽天', fit: '沉穩領袖' },
+  { key: 'zhuque',   name: '朱雀',   origin: '東方', attr: '火',     color: '#ff6b6b', talent: '涅槃',     skills: ['星火', '赤羽', '焚天翼', '涅槃重生'],           ultimate: '南明離火', fit: '熱情愛表現' },
+  { key: 'qilin',    name: '麒麟',   origin: '東方', attr: '祥瑞',   color: '#f6c343', talent: '祥瑞',     skills: ['踏雲', '麟火', '瑞氣千條', '仁獸降福'],         ultimate: '麒麟踏世', fit: '溫和全能' },
+  { key: 'jiuwei',   name: '九尾狐', origin: '日本', attr: '幻',     color: '#b58cf5', talent: '一尾一命', skills: ['狐火', '幻影分身', '魅影迷陣', '九尾天狐'],       ultimate: '九尾通天', fit: '聰慧靈巧' },
+  { key: 'orochi',   name: '八岐大蛇', origin: '日本', attr: '雷',   color: '#7c5cff', talent: '八首同心', skills: ['雷牙', '雙首齊鳴', '八岡雷劫', '天叢雲劍'],       ultimate: '八岐雷海', fit: '爆發行動派' },
+  { key: 'baku',     name: '夢貘',   origin: '日本', attr: '夢',     color: '#6c7bd9', talent: '食夢',     skills: ['安眠', '夢幕', '百夢幻境', '吞夢歸寂'],           ultimate: '萬夢歸一', fit: '安靜專注' },
+  { key: 'angel',    name: '小天使', origin: '西方', attr: '光',     color: '#ffe6a3', talent: '祝福',     skills: ['光羽', '聖諭', '天啟之光', '六翼降臨'],           ultimate: '天光普照', fit: '善良愛幫忙' },
+  { key: 'mermaid',  name: '人魚',   origin: '西方', attr: '水',     color: '#4fd1e0', talent: '海之歌',   skills: ['水泡', '潮詠', '深海聖歌', '海神之歌'],           ultimate: '萬海潮生', fit: '溫柔愛唱歌' },
+  { key: 'unicorn',  name: '獨角獸', origin: '西方', attr: '聖・治癒', color: '#ff9ecf', talent: '淨化',   skills: ['光角', '治癒之光', '彩虹蹄', '聖角天光'],         ultimate: '聖角寧世', fit: '純真善良' },
+  { key: 'griffin',  name: '獅鷲',   origin: '西方', attr: '風',     color: '#ff9f43', talent: '鷹眼',     skills: ['風爪', '鷲鳴', '獅鷲俯衝', '王者之翼'],           ultimate: '天空之王', fit: '勇敢守護' },
+  { key: 'fenrir',   name: '芬里爾', origin: '北歐', attr: '冰',     color: '#9ed8ff', talent: '冰心',     skills: ['冰牙', '霜嘯', '極光巨狼', '吞日之狼'],           ultimate: '永凍極夜', fit: '獨立堅強' },
+  { key: 'bastet',   name: '巴斯特貓', origin: '埃及', attr: '月・夜', color: '#3b3f6b', talent: '九命',   skills: ['月爪', '夜視', '貓神審判', '金字塔之光'],         ultimate: '月神降世', fit: '優雅有主見' },
 ];
 export const BEAST_MAP = Object.fromEntries(BEASTS.map(b => [b.key, b]));
 

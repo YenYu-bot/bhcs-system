@@ -4,9 +4,9 @@
 import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent / 'assets' / 'beasts'
 ROOT.mkdir(parents=True, exist_ok=True)
-BEASTS = [('qinglong','青龍','#2ecc71','🐉'),('baihu','白虎','#f1c40f','🐯'),('zhuque','朱雀','#e74c3c','🐦‍🔥'),('xuanwu','玄武','#3498db','🐢'),
-          ('qilin','麒麟','#f39c12','🦌'),('jiuwei','九尾狐','#9b59b6','🦊'),('kunpeng','鯤鵬','#1abc9c','🐋'),('baize','白澤','#ecf0f1','🐏'),
-          ('pixiu','貔貅','#d4a017','🦁'),('xiezhi','獬豸','#95a5a6','🐐'),('suanni','狻猊','#e67e22','🦁'),('kuiniu','夔牛','#8e44ad','🐂')]
+BEASTS = [('qinglong','青龍','#4ecb8d','🐉'),('zhuque','朱雀','#ff6b6b','🐦‍🔥'),('qilin','麒麟','#f6c343','🦌'),('jiuwei','九尾狐','#b58cf5','🦊'),
+          ('orochi','八岐大蛇','#7c5cff','🐍'),('baku','夢貘','#6c7bd9','🐘'),('angel','小天使','#ffe6a3','👼'),('mermaid','人魚','#4fd1e0','🧜'),
+          ('unicorn','獨角獸','#ff9ecf','🦄'),('griffin','獅鷲','#ff9f43','🦅'),('fenrir','芬里爾','#9ed8ff','🐺'),('bastet','巴斯特貓','#3b3f6b','🐈‍⬛')]
 STAGE = {1:'幼靈',2:'靈獸',3:'聖獸',4:'神獸'}
 def svg(color, emoji, label, sub, size_scale):
     r = 160 + 60 * size_scale
@@ -22,6 +22,7 @@ n = 0
 for key, name, color, emoji in BEASTS:
     for st in range(1, 5):
         (ROOT / f'{key}-{st}.svg').write_text(svg(color, emoji, name, f'{STAGE[st]} · 佔位圖', st), encoding='utf-8'); n += 1
+        (ROOT / f'{key}-{st}-scared.svg').write_text(svg('#94a3b8', '😨', name, f'{STAGE[st]} · 受驚佔位圖', st), encoding='utf-8'); n += 1
 for i, (sub, emoji) in enumerate([('平時','🧒'),('警告','⚠️'),('懲罰','😠')], 1):
     (ROOT / f'steward-{i}.svg').write_text(svg('#56ccb2', emoji, '護山管家', sub + ' · 佔位圖', 2), encoding='utf-8'); n += 1
 for lv, nm in enumerate(['煉氣','築基','結丹','元嬰','化神','煉虛','合體','大乘','渡劫','真仙','金仙','大羅金仙'], 1):

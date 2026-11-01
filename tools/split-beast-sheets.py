@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""把 ChatGPT 產出的白底「設定圖」切成系統用的 512×512 透明 PNG。
-用法：python3 tools/split-beast-sheets.py <含 01-*.png … 15-*.png 的資料夾或多個資料夾>
+"""把 ChatGPT 產出的設定圖切成系統用的 512×512 透明 PNG。
+用法：
+  v1（白底、四階交疊）：python3 tools/split-beast-sheets.py <資料夾…>
+  v2（透明底、等寬分格）：python3 tools/split-beast-sheets.py --v2 <資料夾…>
+      檔名 01-<key>.png…12-<key>.png（四階）、s01-<key>.png…（受驚四階）、13-badges.png（3×4）、14-steward.png（3 欄）、15-items.png（4×2）
 輸出：assets/beasts/{key}-{1..4}.png、steward-{1..3}.png、realm-{1..12}.png、item-{key}.png
 作法：從四個角 floodFill 找出「連到邊緣的白底」去背（白毛靈獸內部的白不會被挖掉），
       橫排靈獸用連通元件拆（各階左右交疊、寬度不等）、格狀徽章／道具用投影空隙切。切不出預期段數會印警告並跳過。"""
@@ -9,7 +12,8 @@ import numpy as np, cv2
 from PIL import Image
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / 'assets' / 'beasts'
-BEASTS = ['qinglong', 'baihu', 'zhuque', 'xuanwu', 'qilin', 'jiuwei', 'kunpeng', 'baize', 'pixiu', 'xiezhi', 'suanni', 'kuiniu']
+BEASTS = ['qinglong', 'zhuque', 'qilin', 'jiuwei', 'orochi', 'baku', 'angel', 'mermaid', 'unicorn', 'griffin', 'fenrir', 'bastet']   # v2 順序
+BEASTS_V1 = ['qinglong', 'baihu', 'zhuque', 'xuanwu', 'qilin', 'jiuwei', 'kunpeng', 'baize', 'pixiu', 'xiezhi', 'suanni', 'kuiniu']
 ITEMS = ['stone', 'dingxin', 'pojing', 'juling', 'xisui', 'rename', 'hat', 'real']
 SIZE, FILL = 512, 0.88          # 網頁顯示最大約 260px，512 夠用又省流量
 STAGE_FILL = [0.70, 0.78, 0.86, 0.94]   # 四階逐漸變大，保留「成長」感
@@ -142,10 +146,46 @@ def main(dirs):
         m = re.match(r'(\d\d)-', p.name)
         if not m: continue
         idx = int(m.group(1)); print(p.name)
-        if 1 <= idx <= 12: split_row(p, [f'{BEASTS[idx - 1]}-{s}' for s in range(1, 5)])
+        if 1 <= idx <= 12: split_row(p, [f'{BEASTS_V1[idx - 1]}-{s}' for s in range(1, 5)])
         elif idx == 13: split_grid(p, [f'realm-{i}' for i in range(1, 13)], cols=3, rows=4)
         elif idx == 14: split_row(p, ['steward-1', 'steward-2', 'steward-3'])
         elif idx == 15: split_grid(p, [f'item-{k}' for k in ITEMS], cols=2, rows=4)
 
+# ── v2：透明底、等寬分格（ChatGPT 直接出透明 PNG，不用去背；靠「每格置中、不超出欄位」切）──
+def cells(bgra, cols, rows=1):
+    h, w = bgra.shape[:2]; cw, ch = w / cols, h / rows
+    return [bgra[int(r * ch):int((r + 1) * ch), int(c * cw):int((c + 1) * cw)] for r in range(rows) for c in range(cols)]
+
+def v2_file(p):
+    m = re.match(r'(s?)(\d\d)-([a-z]+)?', p.name)
+    if not m: return
+    scared, idx, key = m.group(1) == 's', int(m.group(2)), m.group(3)
+    bgra = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
+    if bgra is None or bgra.shape[2] != 4: print(f'  !! {p.name}: 不是透明 PNG，跳過'); return
+    print(p.name)
+    if 1 <= idx <= 12:
+        key = key if key in BEASTS else BEASTS[idx - 1]
+        for i, cell in enumerate(cells(bgra, 4)):
+            sq = crop_square(cell, STAGE_FILL[i])
+            if sq is None: print(f'  !! 第 {i + 1} 欄沒有內容'); continue
+            name = f'{key}-{i + 1}{"-scared" if scared else ""}.png'; save_png(OUT / name, sq); print(f'  {name}')
+    elif idx == 13:
+        for i, cell in enumerate(cells(bgra, 3, 4)):
+            sq = crop_square(cell); save_png(OUT / f'realm-{i + 1}.png', sq) if sq is not None else None; print(f'  realm-{i + 1}.png')
+    elif idx == 14:
+        for i, cell in enumerate(cells(bgra, 3)):
+            sq = crop_square(cell); save_png(OUT / f'steward-{i + 1}.png', sq) if sq is not None else None; print(f'  steward-{i + 1}.png')
+    elif idx == 15:
+        for i, cell in enumerate(cells(bgra, 4, 2)):
+            if i >= len(ITEMS): break
+            sq = crop_square(cell); save_png(OUT / f'item-{ITEMS[i]}.png', sq) if sq is not None else None; print(f'  item-{ITEMS[i]}.png')
+
+def main_v2(dirs):
+    OUT.mkdir(parents=True, exist_ok=True)
+    for d in dirs:
+        for p in sorted(pathlib.Path(d).rglob('*.png')): v2_file(p)
+
 if __name__ == '__main__':
-    main(sys.argv[1:] or ['.'])
+    args = sys.argv[1:]
+    if args and args[0] == '--v2': main_v2(args[1:] or ['.'])
+    else: main(args or ['.'])

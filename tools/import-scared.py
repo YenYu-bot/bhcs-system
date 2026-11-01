@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""匯入 ChatGPT 產出的受驚態單張透明 PNG（{name}-stage-{n}-scared.png，1024×1024 RGBA）。
+"""（v1 用）匯入 ChatGPT 產出的受驚態單張透明 PNG；v2 的受驚圖是分格圖，走 split-beast-sheets.py --v2（{name}-stage-{n}-scared.png，1024×1024 RGBA）。
 用法：python3 tools/import-scared.py <資料夾…>
 輸出：assets/beasts/{key}-{n}-scared.png（512×512、裁到內容、四階逐漸變大、256 色量化，與一般圖同規格）"""
 import sys, pathlib, re
@@ -12,6 +12,7 @@ import importlib.util   # 檔名有連字號，用 spec 載入
 spec = importlib.util.spec_from_file_location('split', HERE / 'split-beast-sheets.py'); split = importlib.util.module_from_spec(spec); spec.loader.exec_module(split)
 
 ALIAS = {'nine-tailed-fox': 'jiuwei', 'ninetailedfox': 'jiuwei'}
+split.BEASTS = split.BEASTS_V1
 
 def main(dirs):
     split.OUT.mkdir(parents=True, exist_ok=True)
