@@ -1,4 +1,4 @@
-// 百宏文教 · 小森靈獸 — 純資料與純函式（不碰 Firebase、不碰 DOM）
+// 百宏文教 · 百宏靈獸 — 純資料與純函式（不碰 Firebase、不碰 DOM）
 // beasts.js（老師端）與 beast-view.js（學生端）都 import 本檔。
 // 設定文件：https://claude.ai/artifact/DvcTpCWrMjF71RCzrwxoVy
 

@@ -47,7 +47,7 @@
 - LINE 推播失敗通知：`dailyCheck` 出錯會推錯誤到 LINE 並寄 Email（指令碼屬性 `ALERT_EMAIL`，沒設就寄給執行者）；`healthCheck` 每晚 23:30 檢查當天是否成功，沒成功就提醒。`installTrigger` 會同時裝兩個觸發器。
 - 電訪週期：每月 11 日起算、次月 10 日截止（「10 月份」= 10/11～11/10，「12 月份」= 12/11～隔年 1/10）。網站與 `gas/Code.gs` 共用常數 `CT_CYCLE_START_DAY = 11`，要改兩邊一起改。LINE 每晚推播當期進度，週一、四與截止前 5 天列出未填學生姓名。
 
-## 小森靈獸（課堂加分 × 本命靈獸）
+## 百宏靈獸（課堂加分 × 本命靈獸）
 
 `beasts.html`（老師／主管）＋ `beast.html?t=<token>`（學生 QR，無登入、唯讀）。同一個 Firebase 專案、同一組老師帳號、同一份 `classes` 名單。設定文件（規則與數值）：<https://claude.ai/artifact/DvcTpCWrMjF71RCzrwxoVy>。
 
@@ -102,7 +102,7 @@ npm test                                                  # 全部：node test/r
 node test/contacts-admin.test.js                          # 單一檔
 ```
 
-- `beasts`：小森靈獸全流程（選獸、加分、上限、試煉、任務發放、商店、懲罰、撤銷、全班目標、設定、學生頁）
+- `beasts`：百宏靈獸全流程（選獸、加分、上限、試煉、任務發放、商店、懲罰、撤銷、全班目標、設定、學生頁）
 - `auth`：主管建立、老師新增／重設／刪除、改密碼提醒、備援主管、忘記密碼
 - `journal`：班級、填日誌、歷史、停課申請、主管所有日誌
 - `contacts-teacher` / `contacts-admin`：電訪表老師端與主管端全部流程

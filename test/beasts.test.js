@@ -1,4 +1,4 @@
-// 小森靈獸：選獸 → 加分（上限、倍率）→ 試煉 → 任務發靈石 → 商店 → 懲罰 → 撤銷 → 全班目標 → 主管設定 → 學生頁
+// 百宏靈獸：選獸 → 加分（上限、倍率）→ 試煉 → 任務發靈石 → 商店 → 懲罰 → 撤銷 → 全班目標 → 主管設定 → 學生頁
 const { launch } = require('./helpers'); const { eq, ok, includes } = require('./assert');
 (async () => {
   const t = await launch({ path: 'beasts.html' }); const { page, log, toast, visible } = t;

@@ -148,7 +148,7 @@ service cloud.firestore {
     match /archives/{id}       { allow read, write: if isAdmin(); }
     match /archiveChunks/{id}  { allow read, write: if isAdmin(); }
 
-    // ── 小森靈獸（beasts.html / beast.html）──
+    // ── 百宏靈獸（beasts.html / beast.html）──
     // 設定：任何人可讀（學生頁要算門檻；內容無個資），只有主管能改
     match /beastConfig/{id} { allow get: if true; allow list: if isStaff(); allow write: if isAdmin(); }
 

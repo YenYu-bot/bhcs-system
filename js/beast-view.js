@@ -1,4 +1,4 @@
-// 百宏文教 · 小森靈獸 — 學生 QR 檢視頁（無登入、唯讀）
+// 百宏文教 · 百宏靈獸 — 學生 QR 檢視頁（無登入、唯讀）
 // beast.html?t=<token>；token = beasts/{token} 的文件 id，規則只開 get、不開列舉。
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
@@ -59,6 +59,6 @@ function render(b) {
     <div class="card"><div class="card-title">道具與飾品</div><div class="sv-items">${[...items, ...cos].join('') || '<span class="hint" style="margin:0">還沒有道具，完成老師的任務賺靈石，到補習班跟老師買。</span>'}</div>
       <div class="hint">本週靈石入帳 ${ws}/${capWeekStones(b.courseCount, cfg)} · ${b.courseCount} 門課 ×${multiplier(b.courseCount, cfg)}</div></div>
     <div class="card"><div class="card-title">最近紀錄</div><div class="log-list" id="logs">${logsHtml()}</div></div>
-    <div class="sv-foot">百宏文教 · 小森靈獸<br>這一頁只能看，加分、購買請在補習班由老師操作。</div>`;
+    <div class="sv-foot">百宏文教 · 百宏靈獸<br>這一頁只能看，加分、購買請在補習班由老師操作。</div>`;
 }
 main();

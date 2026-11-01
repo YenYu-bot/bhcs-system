@@ -6,7 +6,7 @@ const ROOT = path.resolve(__dirname, '..');
 const MOCK = path.join(__dirname, 'mocks');
 const MIME = { '.html':'text/html;charset=utf-8', '.js':'text/javascript;charset=utf-8', '.css':'text/css;charset=utf-8', '.json':'application/json', '.pdf':'application/pdf' };
 
-// opts.path：要開的頁面（預設 index.html；小森靈獸用 'beasts.html'）
+// opts.path：要開的頁面（預設 index.html；百宏靈獸用 'beasts.html'）
 async function launch(opts = {}) {
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];

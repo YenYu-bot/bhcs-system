@@ -1,4 +1,4 @@
-// 百宏文教 · 小森靈獸 — 老師／主管端
+// 百宏文教 · 百宏靈獸 — 老師／主管端
 // 沿用 bhcs-system 的 Firebase 專案與老師帳號（logins/{userId} → 合成信箱 → Auth；teachers/{uid}）。
 // 事件綁定走 inline onclick，所以對外函式掛在 window.*。
 //
