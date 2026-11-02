@@ -577,13 +577,50 @@ function renderStudent(full = true) {
       const canUndo = !l.undone && dayKey(l.ts) === today && ['pts', 'penalty', 'stones', 'goal'].includes(l.type) && (me.isAdmin || l.by === me.id);
       const d = l.delta ? `<span class="lg-d ${l.delta > 0 ? 'pos' : 'neg'}">${l.delta > 0 ? '+' : ''}${l.delta}</span>` : l.stones ? `<span class="lg-d stone">${l.stones > 0 ? '+' : ''}${l.stones}💎</span>` : '<span class="lg-d">·</span>';
       return `<div class="log-row ${l.undone ? 'undone' : ''}">${d}<span class="lg-r">${esc(l.reason)}<br><span class="lg-t">${esc(l.byName || '')}${l.className ? ' · ' + esc(l.className) : ''}</span></span><span class="lg-t">${fmtTs(l.ts)}</span>${canUndo ? `<button class="btn btn-ghost btn-sm" onclick="undoLog('${id}','${l._id}')">撤銷</button>` : ''}</div>`;
-    }).join('') || '<div class="empty">還沒有紀錄</div>'}</div>`;
+    }).join('') || '<div class="empty">還沒有紀錄</div>'}</div>
+      ${me.isAdmin ? `<div class="trial-box" style="margin-top:14px;border-color:rgba(255,107,107,.4)"><div class="tb-title" style="color:var(--red)">🗑 刪除這隻靈獸（主管）</div><div class="hint" style="margin:0 0 8px">用於測試後還原：刪掉靈獸、所有紀錄，並扣回班級本週靈石額度、月報表與任務已發放標記。學生會回到「尚未選獸」，舊 QR 連結失效。</div><button class="btn btn-primary btn-sm" onclick="resetBeast('${id}')">刪除並還原</button></div>` : ''}`;
   } else if (stTab === 'qr') {
     const link = beastLink(id);
     $('st-qr').innerHTML = `<div class="qr-box">${qrSvg(link, 220)}<div class="qr-link">${esc(link)}</div><div class="hint">貼在聯絡簿；掃描只能看靈獸、靈石與紀錄，不能操作。</div><button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${link}').then(()=>showToast('已複製連結'))">複製連結</button></div>`;
   }
 }
 window.showToast = showToast;
+// 主管：刪除靈獸並還原它對班級統計造成的影響（測試用）
+window.resetBeast = async function (beastId) {
+  const b = curBeast(); if (!b || !me.isAdmin) return;
+  if (prompt(`輸入學生姓名「${b.name}」確認刪除，此動作無法復原`) !== b.name) { showToast('已取消', 'error'); return; }
+  showLoading('刪除中...');
+  try {
+    const logs = (await getDocs(collection(db, 'beasts', beastId, 'log'))).docs.map(d => ({ _id: d.id, ...d.data() }));
+    // 依班級彙總要扣回的量（撤銷過的與撤銷紀錄本身已互相抵銷，只算未撤銷的原始紀錄）
+    const per = {};
+    for (const l of logs) {
+      if (!l.classId || l.undone || l.type === 'undo') continue;
+      const c = per[l.classId] = per[l.classId] || { issuedWeek: 0, stats: {} };
+      const mk = monthKey(l.ts), m = c.stats[mk] = c.stats[mk] || {};
+      const add = (k, n) => { if (n) m[k] = (m[k] || 0) + n; };
+      if (l.type === 'pts' || l.type === 'goal') add('ptsIssued', l.delta || 0);
+      if (l.type === 'stones') { add('stonesIssued', l.stones || 0); if (weekKey(l.ts) === weekKey()) c.issuedWeek += l.stones || 0; }
+      if (l.type === 'buy' || l.type === 'swap') add('stonesSpent', -(l.stones || 0));
+      if (l.type === 'penalty') { add('penaltyPts', -(l.delta || 0)); add('penaltyStones', -(l.stones || 0)); }
+    }
+    for (const [cid, c] of Object.entries(per)) {
+      const ref = doc(db, 'beastClass', cid), snap = await getDoc(ref); if (!snap.exists()) continue;
+      const cs = snap.data(), patch = { updatedAt: Date.now() };
+      if (c.issuedWeek && (cs.issued || {}).weekKey === weekKey()) patch.issued = { weekKey: weekKey(), total: Math.max(0, (cs.issued.total || 0) - c.issuedWeek) };
+      const stats = { ...(cs.stats || {}) };
+      for (const [mk, m] of Object.entries(c.stats)) { const cur = { ...(stats[mk] || {}) }; for (const [k, n] of Object.entries(m)) cur[k] = Math.max(0, (cur[k] || 0) - n); stats[mk] = cur; }
+      patch.stats = stats;
+      await setDoc(ref, patch, { merge: true });
+    }
+    // 任務已發放標記
+    const tsnap = await getDocs(collection(db, 'beastTasks'));
+    for (const d of tsnap.docs) { const aw = { ...((d.data().awarded) || {}) }; if (aw[b.nameKey]) { delete aw[b.nameKey]; await updateDoc(doc(db, 'beastTasks', d.id), { awarded: aw }); } }
+    for (const l of logs) await deleteDoc(doc(db, 'beasts', beastId, 'log', l._id));
+    await deleteDoc(doc(db, 'beasts', beastId));
+    closeStudent(); hideLoading(); showToast(`已刪除 ${b.name} 的靈獸，可重新選獸`);
+  } catch (e) { hideLoading(); console.error(e); showToast('刪除失敗：' + authErrMsg(e), 'error'); }
+};
 window.doPenalty = function (id, n) {
   const kind = $('pnKind').value; let reason = $('pnReason').value; if (reason === '__c') reason = $('pnCustom').value.trim();
   penalize(id, kind, n, reason);

@@ -119,8 +119,23 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   eq((await t.store()).beastConfig.main.caps.weekPts, 30, 'config saved');
   eq(await page.locator('#classSelect option').count(), 3, 'admin sees all classes');
 
+  // 主管刪除並還原（放在學生頁之後跑：先記住 store 給學生頁用）
+  const dumpBefore = await t.store();
+  await page.click('#tabs .tab:has-text("課堂")'); await page.selectOption('#classSelect', 'c1'); await wait(400);
+  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(300);
+  await page.click('#smTabs .tab:has-text("紀錄")'); await wait(300);
+  t.setPrompts(['甲']); await page.click('#st-log button:has-text("刪除並還原")'); await wait(800);
+  const after = await t.store();
+  ok(!after.beasts[bid], 'beast deleted');
+  eq(Object.keys(after['beasts/' + bid + '/log'] || {}).length, 0, 'logs deleted');
+  eq(after.beastClass.c1.issued.total, 0, 'class weekly stones restored');
+  const mk = Object.keys(after.beastClass.c1.stats)[0], st = after.beastClass.c1.stats[mk];
+  eq([st.ptsIssued, st.stonesIssued, st.stonesSpent], [0, 0, 0], 'monthly stats restored');
+  eq(Object.values(after.beastTasks)[0].awarded['甲'], undefined, 'task award mark cleared');
+  eq(await page.locator('#beastGrid .beast-card.unassigned').count(), 3, 'student back to unassigned');
+
   // 學生頁（同一份 store 重新注入後開 beast.html）
-  const dump = await t.store();
+  const dump = dumpBefore;
   await page.addInitScript(s => { window.__store = s; }, dump);
   await page.goto(page.url().replace(/beasts\.html.*$/, '') + 'beast.html?t=' + bid); await wait(500);
   const txt = await page.locator('#view').textContent();
