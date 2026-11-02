@@ -363,3 +363,17 @@ body.wide .main{max-width:1480px;}
 .st-stage .st-main{align-items:flex-end;}
 .st-stage .st-bubble{align-self:center;margin-top:0;}
 .st-stage .st-figure{margin-bottom:-14px;}
+
+/* ── 匯出 QR（列印頁） ── */
+#qrSheet{display:none}
+body.qr-printing>*:not(#qrSheet){display:none!important}
+body.qr-printing #qrSheet{display:block;background:#fff;color:#3a2e22;min-height:100vh;font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif}
+#qrSheet .qs-bar{position:sticky;top:0;padding:12px;background:#fff6e5;border-bottom:1px solid #e8d7b8;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px;z-index:2}
+#qrSheet h1{font-size:15px;margin:8px 0 6px;text-align:center}
+#qrSheet .qs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm;padding:0 2mm 4mm;max-width:190mm;margin:0 auto}
+#qrSheet .qs-card{border:1.5px dashed #c9b28d;border-radius:4mm;padding:3mm;text-align:center;height:66mm;box-sizing:border-box;break-inside:avoid;display:flex;flex-direction:column;align-items:center;justify-content:space-between;background:#fff}
+#qrSheet .top{display:flex;align-items:center;gap:2mm;justify-content:center}
+#qrSheet .top img{width:13mm;height:13mm;object-fit:contain}
+#qrSheet .n{font-size:17px;font-weight:700}#qrSheet .b,#qrSheet .h{font-size:11px;color:#8a7356}
+#qrSheet .qs-card svg{width:40mm;height:40mm}
+@media print{@page{size:A4;margin:10mm} body.qr-printing{background:#fff!important} body.qr-printing>#qrSheet{display:block!important} #qrSheet .qs-bar{display:none}}

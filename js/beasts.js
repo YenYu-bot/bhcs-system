@@ -585,6 +585,24 @@ function renderStudent(full = true) {
   }
 }
 window.showToast = showToast;
+// 一鍵匯出全班 QR：開新視窗排成 A4 卡片（每頁 3×4），直接列印或存成 PDF
+window.exportQRs = function () {
+  if (!cls) { showToast('請先選擇班級', 'error'); return; }
+  const names = cls.students || [], cards = [], miss = [];
+  for (const nm of names) {
+    const b = beasts[normName(nm)];
+    if (!b) { miss.push(nm); continue; }
+    const info = BEAST_MAP[b.beast] || BEASTS[0], r = realmInfo(b.realm), link = beastLink(b._id);
+    const pic = new URL(imgSrc(b.beast, r.stage), location.href).href;
+    cards.push(`<div class="qs-card"><div class="top"><img src="${pic}" onerror="this.style.display='none'"><div><div class="n">${esc(nm)}</div><div class="b">${esc(b.petName || info.name)} · ${esc(r.name)}</div></div></div>${qrSvg(link, 150)}<div class="h">掃描查看我的靈獸</div></div>`);
+  }
+  if (!cards.length) { showToast('這班還沒有學生選靈獸，沒有 QR 可匯出', 'error'); return; }
+  let el = $('qrSheet');
+  if (!el) { el = document.createElement('div'); el.id = 'qrSheet'; document.body.appendChild(el); }
+  el.innerHTML = `<div class="qs-bar"><button class="btn btn-primary" onclick="print()">🖨 列印 / 存成 PDF</button><button class="btn btn-ghost" onclick="document.body.classList.remove('qr-printing')">✕ 關閉</button><span>${esc(cls.name)}：共 ${cards.length} 張${miss.length ? `；尚未選靈獸（沒有 QR）：${miss.map(esc).join('、')}` : ''}</span></div>
+    <h1>百宏靈獸 · ${esc(cls.name)}</h1><div class="qs-grid">${cards.join('')}</div>`;
+  document.body.classList.add('qr-printing'); window.scrollTo(0, 0);
+};
 // 主管：刪除靈獸並還原它對班級統計造成的影響（測試用）
 window.resetBeast = async function (beastId) {
   const b = curBeast(); if (!b || !me.isAdmin) return;
