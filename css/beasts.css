@@ -342,3 +342,16 @@ table.rep th:first-child,table.rep td:first-child{text-align:left;}
 .pj-timer small{font-size:12px;font-weight:700;opacity:.8;margin-right:6px;}
 .pj-timer.last{color:#ffb27a;border-color:#ffb27a;}
 .pj-timer.done{color:#fff;background:#e05555;animation:pop .6s ease-in-out infinite;}
+
+/* 管家頁：管家在左、計時器直排在右；這一頁把版面放寬 */
+body.wide .main{max-width:1480px;}
+.st-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:stretch;margin-bottom:12px;}
+.st-layout .st-stage{margin-bottom:0;}
+.st-layout .st-timers{grid-template-columns:1fr;margin-bottom:0;align-content:space-between;gap:10px;}
+.st-layout .tm-card{padding:8px 12px 10px;}
+.st-layout .tm-time{font-size:44px;margin:0 0 4px;}
+.st-layout .tm-bar{margin-bottom:8px;}
+.st-layout .tm-quick button{padding:5px 0;font-size:13px;}
+@media(max-width:1100px){.st-layout{grid-template-columns:1fr;}.st-layout .st-timers{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:700px){.st-layout .st-timers{grid-template-columns:1fr;}}
+.st-layout .tm-card.done .tm-time{font-size:34px;margin:6px 0 8px;}
