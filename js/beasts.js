@@ -148,7 +148,7 @@ async function loadClasses() {
 window.selectClass = function (id) {
   unsubs.forEach(u => u()); unsubs = [];
   cls = myClasses.find(c => c._id === id) || null;
-  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sw.lastKey = undefined;
+  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sw.lastKey = undefined; loadStSettings();
   localStorage.setItem('beast.class', id || '');
   $('goalCard').style.display = cls ? '' : 'none';
   if (!cls) { $('beastGrid').innerHTML = '<div class="empty">請先選擇班級</div>'; $('classStats').innerHTML = ''; $('taskList').innerHTML = ''; return; }
@@ -701,6 +701,21 @@ window.awardTask = async function (taskId, card) {
 // 護山管家（音量偵測，只在本機跑；狀態寫 beastClass 讓投影／手機同步）
 // ══════════════════════════════════════════════════════════════
 const sw = { on: false, paused: false, stream: null, ctx: null, an: null, buf: null, timer: null, baseline: null, samples: [], holdStart: 0, lastStrike: 0 };
+// ── 太吵界線：5 段滑桿對應「環境音 + N dB」，每個班各自記在這台裝置 ──
+const SENS = [null, { db: 30, label: '很寬鬆' }, { db: 25, label: '寬鬆' }, { db: 20, label: '普通' }, { db: 15, label: '嚴格' }, { db: 10, label: '很嚴格' }];
+window.setSens = function (n) { $('stDb').value = SENS[n].db; $('stSensLabel').textContent = SENS[n].label; $('meterTh').style.left = ((SENS[n].db + 10) / 50 * 100) + '%'; saveStSettings(); };
+function syncSens() { const d = +$('stDb').value; let best = 3, diff = 99; for (let i = 1; i <= 5; i++) { const x = Math.abs(SENS[i].db - d); if (x < diff) { diff = x; best = i; } } $('stSens').value = best; $('stSensLabel').textContent = diff ? `自訂 +${d}` : SENS[best].label; $('meterTh').style.left = ((d + 10) / 50 * 100) + '%'; if (sw.on && sw.baseline !== null && !sw.paused) $('stewardStatus').textContent = `偵測中（太吵界線：${$('stSensLabel').textContent}）`; }
+window.saveStSettings = function () { if (!cls) return; try { localStorage.setItem('beast.st.' + cls._id, JSON.stringify({ db: +$('stDb').value, hold: +$('stHold').value, cool: +$('stCool').value, level: $('stLevel').value })); } catch (e) { } syncSens(); };
+function loadStSettings() {
+  let v = null; try { v = JSON.parse(localStorage.getItem('beast.st.' + (cls && cls._id)) || 'null'); } catch (e) { }
+  $('stDb').value = v?.db ?? cfg.steward.dbAbove; $('stHold').value = v?.hold ?? cfg.steward.holdSec; $('stCool').value = v?.cool ?? cfg.steward.cooldownSec; $('stLevel').value = v?.level ?? cfg.steward.level;
+  syncSens();
+}
+window.recalibrate = function () {
+  if (!sw.on) { showToast('先開啟管家', 'error'); return; }
+  sw.baseline = null; sw.samples = []; sw.holdStart = 0;
+  $('stewardStatus').textContent = '重新校準中…請保持教室平常的音量 10 秒';
+};
 function stSettings() { return { dbAbove: +$('stDb').value || cfg.steward.dbAbove, holdSec: +$('stHold').value || cfg.steward.holdSec, cooldownSec: +$('stCool').value || cfg.steward.cooldownSec, level: $('stLevel').value || cfg.steward.level }; }
 window.toggleSteward = async function () {
   if (sw.on) { stopSteward(); return; }
@@ -748,13 +763,14 @@ function stewardTick() {
   const set = stSettings(); const now = Date.now();
   if (sw.baseline === null) {
     sw.samples.push(db);
-    if (sw.samples.length >= 100) { const a = [...sw.samples].sort((x, y) => x - y); sw.baseline = a[Math.floor(a.length / 2)]; $('stewardStatus').textContent = `偵測中（環境音 ${sw.baseline.toFixed(0)} dBFS，門檻 +${set.dbAbove}）`; }
+    if (sw.samples.length >= 100) { const a = [...sw.samples].sort((x, y) => x - y); sw.baseline = a[Math.floor(a.length / 2)]; $('stewardStatus').textContent = `偵測中（太吵界線：${$('stSensLabel').textContent}）`; }
     setMeter(Math.max(0, Math.min(100, (db + 60) / 60 * 100)), 0.3);
     stewardView('calib');
     return;
   }
   const th = sw.baseline + set.dbAbove;
-  const pct = Math.max(0, Math.min(100, (db - sw.baseline + 10) / (set.dbAbove + 20) * 100)), thPct = Math.max(0, Math.min(100, (set.dbAbove + 10) / (set.dbAbove + 20) * 100));
+  // 固定刻度：環境音 -10 dB ～ +40 dB，界線位置會跟著老師調的靈敏度移動
+  const pct = Math.max(0, Math.min(100, (db - sw.baseline + 10) / 50 * 100)), thPct = Math.max(0, Math.min(100, (set.dbAbove + 10) / 50 * 100));
   $('meterTh').style.left = thPct + '%';
   setMeter(pct, pct / thPct);
   sw.live = sw.paused ? 'paused' : db > th ? 'loud' : 'calm';
