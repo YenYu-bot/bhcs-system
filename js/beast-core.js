@@ -126,6 +126,15 @@ export const DEFAULT_CONFIG = {
   swapFreeMaxRealm: 3,      // 免費換獸限此境界以前
   trialCooldownDays: 7,
   steward: { dbAbove: 20, holdSec: 1.5, cooldownSec: 5, level: 'mid', resetMin: 10, scaredMin: 10 },
+  // 第 3 次太吵 → 懲罰轉盤；stones > 0 代表全班每人扣這麼多靈石（仍受單次扣靈石上限與「不扣成負數」限制），其他是老師現場執行的項目
+  wheel: [
+    { label: '全班扣 2 靈石', stones: 2, weight: 2 },
+    { label: '全班罰寫課文一遍', stones: 0, weight: 2 },
+    { label: '全班站立反省 1 分鐘', stones: 0, weight: 1 },
+    { label: '全班安靜默讀 3 分鐘', stones: 0, weight: 2 },
+    { label: '每人背一個單字', stones: 0, weight: 2 },
+    { label: '好運！管家原諒大家', stones: 0, weight: 1 },
+  ],
   realReward: [             // 現實獎勵（老師自訂，主管核價）
     { label: '選座位一次', price: 30 }, { label: '作業免寫一題', price: 40 }, { label: '當日小老師', price: 25 },
   ],
@@ -270,4 +279,12 @@ export function randomId(n = 20) {
   (globalThis.crypto || { getRandomValues: a => a.forEach((_, i) => a[i] = Math.random() * 256) }).getRandomValues(arr);
   for (const v of arr) s += chars[v % chars.length];
   return s;
+}
+
+// 轉盤：依權重抽一格（r 為 0～1 的亂數）
+export function pickWeighted(segs, r = Math.random()) {
+  const total = segs.reduce((a, s) => a + Math.max(0, +s.weight || 0), 0) || segs.length;
+  let x = r * total;
+  for (let i = 0; i < segs.length; i++) { x -= Math.max(0, +segs[i].weight || 0) || (total === segs.length ? 1 : 0); if (x < 0) return i; }
+  return segs.length - 1;
 }

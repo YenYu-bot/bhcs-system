@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611021209">
-<link rel="stylesheet" href="css/beasts.css?v=202611021209">
+<link rel="stylesheet" href="css/app.css?v=202611021223">
+<link rel="stylesheet" href="css/beasts.css?v=202611021223">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -106,7 +106,7 @@
             <button class="btn st-btn btn-sm" onclick="recalibrate()" title="教室平常的音量變了（例如開了冷氣、換了教室）就重新量一次">🎧 重新校準</button>
           </div>
           <div class="st-row">
-            <div class="st-bells" title="超標次數：第 1 次警告、第 2 次靈獸受驚"><img id="bell1" src="assets/beasts/st-icon-bell-off.png" alt=""><img id="bell2" src="assets/beasts/st-icon-bell-off.png" alt=""></div>
+            <div class="st-bells" title="超標次數：第 1 次警告、第 2 次靈獸受驚、第 3 次懲罰轉盤"><img id="bell1" src="assets/beasts/st-icon-bell-off.png" alt=""><img id="bell2" src="assets/beasts/st-icon-bell-off.png" alt=""><img id="bell3" src="assets/beasts/st-icon-bell-off.png" alt=""></div>
             <div class="steward-status" id="stewardStatus">尚未開啟</div>
           </div>
           <div class="steward-controls">
@@ -119,13 +119,17 @@
       </div>
       <details class="card st-settings-card">
         <summary>⚙️ 管家設定</summary>
-        <div class="hint" style="margin:8px 0 10px">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」；安靜一段時間會自動歸零。</div>
+        <div class="hint" style="margin:8px 0 10px">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」，第三次轉懲罰轉盤；安靜一段時間會自動歸零。</div>
         <div class="steward-settings">
           <label>門檻：環境音 +<input type="number" id="stDb" min="5" max="40" step="1" onchange="saveStSettings()"> dB</label>
           <label>持續<input type="number" id="stHold" min="0.5" max="5" step="0.5" onchange="saveStSettings()"> 秒才算</label>
           <label>冷卻<input type="number" id="stCool" min="1" max="30" step="1" onchange="saveStSettings()"> 秒</label>
           <label>懲罰<select id="stLevel" onchange="saveStSettings()"><option value="light">輕：只播動畫</option><option value="mid">中：10 分鐘加分減半</option><option value="heavy">重：減半＋取消本週全班目標</option></select></label>
         </div>
+        <div class="card-title" style="margin:16px 0 6px">🎡 懲罰轉盤（第 3 次太吵）</div>
+        <div class="hint" style="margin:0 0 8px">「扣靈石」填數字＝全班每人扣這麼多（不會扣成負數）；填 0 就是老師現場執行的項目。比重越大越容易轉到。每班各自記在這台裝置。</div>
+        <div id="wheelRows"></div>
+        <div style="display:flex;gap:8px;margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="wheelAddRow()">＋ 新增一格</button><button class="btn btn-ghost btn-sm" onclick="wheelReset()">還原預設</button><button class="btn btn-ghost btn-sm" onclick="openWheel(true)">🎡 試轉看看（不會扣分）</button></div>
       </details>
     </div>
 
@@ -200,6 +204,16 @@
   </div>
 </div>
 
+<!-- ───────── 懲罰轉盤（全螢幕，投影與老師端同步） ───────── -->
+<div id="wheelOverlay" class="wheel-overlay" style="display:none">
+  <div class="wheel-card">
+    <div class="wheel-head"><img src="assets/beasts/steward-mood-4.png" alt=""><div><div class="wheel-title" id="wheelTitle">太吵 3 次了！轉轉盤決定懲罰</div><div class="wheel-sub" id="wheelSub">管家要拿出轉盤囉…</div></div></div>
+    <div class="wheel-wrap"><div class="wheel-pointer">▼</div><svg id="wheelSvg" viewBox="-110 -110 220 220"><g id="wheelRot"></g></svg></div>
+    <div class="wheel-result" id="wheelResult"></div>
+    <div class="wheel-actions"><button class="btn st-btn-main" id="wheelSpinBtn" onclick="spinWheel()">🎡 轉！</button><button class="btn st-btn" onclick="closeWheel()">關閉</button></div>
+  </div>
+</div>
+
 <!-- ───────── 投影模式 ───────── -->
 <div id="projector" class="projector" style="display:none">
   <div class="pj-head">
@@ -212,6 +226,6 @@
   <div class="pj-banner" id="pjBanner"></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611021209"></script>
+<script type="module" src="js/beasts.js?v=202611021223"></script>
 </body>
 </html>

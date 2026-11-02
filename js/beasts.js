@@ -15,7 +15,7 @@ import { REALMS, STAGE_NAMES, TRIAL_HINTS, BEASTS, BEAST_MAP, SHOP, SHOP_MAP, DE
   weekKey, dayKey, monthKey, multiplier, capWeekPts, capWeekStones, capHoldStones, realmFor, realmInfo, nextRealm, progress,
   trialPending, trialCooldownLeft, newBeast, normName, rollWeek, applyPts, penaltyPts, penaltyStones, grantStones,
   stageOf, imgSrc, imgFallback, imgScared, fmtTs, randomId,
-  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars } from "./beast-core.js";
+  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars, pickWeighted } from "./beast-core.js";
 import { qrSvg } from "./vendor/qr.js";
 
 const firebaseConfig = {
@@ -705,11 +705,11 @@ const sw = { on: false, paused: false, stream: null, ctx: null, an: null, buf: n
 const SENS = [null, { db: 30, label: '很寬鬆' }, { db: 25, label: '寬鬆' }, { db: 20, label: '普通' }, { db: 15, label: '嚴格' }, { db: 10, label: '很嚴格' }];
 window.setSens = function (n) { $('stDb').value = SENS[n].db; $('stSensLabel').textContent = SENS[n].label; $('meterTh').style.left = ((SENS[n].db + 10) / 50 * 100) + '%'; saveStSettings(); };
 function syncSens() { const d = +$('stDb').value; let best = 3, diff = 99; for (let i = 1; i <= 5; i++) { const x = Math.abs(SENS[i].db - d); if (x < diff) { diff = x; best = i; } } $('stSens').value = best; $('stSensLabel').textContent = diff ? `自訂 +${d}` : SENS[best].label; $('meterTh').style.left = ((d + 10) / 50 * 100) + '%'; if (sw.on && sw.baseline !== null && !sw.paused) $('stewardStatus').textContent = `偵測中（太吵界線：${$('stSensLabel').textContent}）`; }
-window.saveStSettings = function () { if (!cls) return; try { localStorage.setItem('beast.st.' + cls._id, JSON.stringify({ db: +$('stDb').value, hold: +$('stHold').value, cool: +$('stCool').value, level: $('stLevel').value })); } catch (e) { } syncSens(); };
+window.saveStSettings = function () { if (!cls) return; try { const old = JSON.parse(localStorage.getItem('beast.st.' + cls._id) || '{}'); localStorage.setItem('beast.st.' + cls._id, JSON.stringify({ ...old, db: +$('stDb').value, hold: +$('stHold').value, cool: +$('stCool').value, level: $('stLevel').value })); } catch (e) { } syncSens(); };
 function loadStSettings() {
   let v = null; try { v = JSON.parse(localStorage.getItem('beast.st.' + (cls && cls._id)) || 'null'); } catch (e) { }
   $('stDb').value = v?.db ?? cfg.steward.dbAbove; $('stHold').value = v?.hold ?? cfg.steward.holdSec; $('stCool').value = v?.cool ?? cfg.steward.cooldownSec; $('stLevel').value = v?.level ?? cfg.steward.level;
-  syncSens();
+  syncSens(); renderWheelRows();
 }
 window.recalibrate = function () {
   if (!sw.on) { showToast('先開啟管家', 'error'); return; }
@@ -786,8 +786,13 @@ function stewardTick() {
 async function strike(set) {
   const st = classState.steward || {}; const n = (st.strikes || 0) + 1;
   beep(n === 1 ? 660 : 330, n === 1 ? 0.25 : 0.6);
-  if (n === 1) { await writeSteward({ strikes: 1, lastStrikeAt: Date.now() }); $('stewardStatus').textContent = '⚠️ 第一次警告'; return; }   // 畫面閃爍由 renderStewardRemote 偵測狀態變化觸發
-  const patch = { strikes: 0, lastStrikeAt: Date.now(), scaredUntil: Date.now() + cfg.steward.scaredMin * 60000, scaredLevel: set.level };
+  if (n === 1) { await writeSteward({ strikes: 1, lastStrikeAt: Date.now() }); $('stewardStatus').textContent = '⚠️ 第一次警告'; return; }
+  if (n === 2 && !(st.scaredUntil > Date.now()) && false) return;   // 畫面閃爍由 renderStewardRemote 偵測狀態變化觸發
+  if (n >= 3) {   // 第 3 次：拿出懲罰轉盤（所有裝置同步打開），次數歸零
+    await writeSteward({ strikes: 0, lastStrikeAt: Date.now(), wheel: { open: true, at: Date.now(), segs: wheelSegs(), spinAt: 0, idx: -1 } });
+    $('stewardStatus').textContent = '🎡 第三次太吵：懲罰轉盤'; return;
+  }
+  const patch = { strikes: 2, lastStrikeAt: Date.now(), scaredUntil: Date.now() + cfg.steward.scaredMin * 60000, scaredLevel: set.level };
   await writeSteward(patch);
   if (set.level === 'heavy') await setDoc(doc(db, 'beastClass', cls._id), { goal: { ...(classState.goal || {}), blockedWeek: weekKey() }, updatedAt: Date.now() }, { merge: true });
   $('stewardStatus').textContent = `😨 全班靈獸受驚（${{ light: '輕', mid: '中', heavy: '重' }[set.level]}）`;
@@ -803,6 +808,7 @@ function renderStewardRemote() {
   }
   sw.lastKey = key; sw.lastScared = st.scaredUntil || 0;
   stewardView();
+  syncWheel(st.wheel || {});
   const pj = $('pjSteward');
   if (!st.on) { pj.style.display = 'none'; return; }
   pj.style.display = ''; pj.className = 'pj-steward ' + (scaredVisual() ? 'angry' : st.strikes ? 'warn' : '');
@@ -820,7 +826,7 @@ const BUBBLES = {
 };
 function stewardView(force) {
   const st = classState.steward || {};
-  const state = scaredVisual() ? 'angry' : st.strikes === 1 ? 'warn' : force || (sw.on ? (sw.baseline === null ? 'calib' : sw.live || 'calm') : st.on ? (st.paused ? 'paused' : 'calm') : 'off');
+  const state = scaredVisual() ? 'angry' : st.strikes >= 1 ? 'warn' : force || (sw.on ? (sw.baseline === null ? 'calib' : sw.live || 'calm') : st.on ? (st.paused ? 'paused' : 'calm') : 'off');
   const stage = $('stStage'); if (!stage) return;
   if (stage.dataset.state !== state) {
     stage.className = 'st-stage ' + state; stage.dataset.state = state; sw.bubbleAt = 0;
@@ -828,8 +834,9 @@ function stewardView(force) {
   }
   const now = Date.now();
   if (!sw.bubbleAt || now - sw.bubbleAt > 8000) { const list = BUBBLES[state]; $('stBubble').innerHTML = list[Math.floor(Math.random() * list.length)]; sw.bubbleAt = now; }
-  const b1 = state === 'warn' || state === 'angry', b2 = state === 'angry';
-  for (const [id, on] of [['bell1', b1], ['bell2', b2]]) { const el = $(id); if (el.classList.contains('lit') !== on) { el.classList.toggle('lit', on); el.src = `assets/beasts/st-icon-bell-${on ? 'on' : 'off'}.png`; } }
+  const k = st.strikes || 0, wheelOpen = !!(st.wheel || {}).open;
+  const b1 = k >= 1 || state === 'angry' || wheelOpen, b2 = k >= 2 || state === 'angry' || wheelOpen, b3 = wheelOpen;
+  for (const [id, on] of [['bell1', b1], ['bell2', b2], ['bell3', b3]]) { const el = $(id); if (el.classList.contains('lit') !== on) { el.classList.toggle('lit', on); el.src = `assets/beasts/st-icon-bell-${on ? 'on' : 'off'}.png`; } }
   if (state === 'paused' || state === 'off') setFace('tea');
 }
 // 管家心情圖：1 揮手、2 捧茶、3 聆聽、4 噓、5 抱小獸安撫、6 打瞌睡
@@ -843,6 +850,95 @@ function flash(kind, main, sub) {
   const f = $('stFlash'); f.className = 'st-flash ' + kind; f.innerHTML = `<img src="assets/beasts/steward-mood-${kind === 'angry' ? 5 : 4}.png" alt="">${main}<small>${sub}</small>`; void f.offsetWidth; f.classList.add('show');
   banner(main, sub, kind === 'angry' ? '#ff6b6b' : '#f6c343');
 }
+
+// ══════════════════════════════════════════════════════════════
+// 懲罰轉盤（第 3 次太吵）：狀態寫在 beastClass.steward.wheel，老師端與投影同步轉
+// ══════════════════════════════════════════════════════════════
+const WHEEL_COLORS = ['#ffd8a8', '#c8ecc4', '#ffd1dc', '#cfe6ff', '#fff1a8', '#e3d4ff', '#ffe0c2', '#d2f4ea'];
+function wheelSegs() {
+  let v = null; try { v = JSON.parse(localStorage.getItem('beast.st.' + (cls && cls._id)) || 'null'); } catch (e) { }
+  const segs = (v && Array.isArray(v.wheel) && v.wheel.length >= 2) ? v.wheel : (cfg.wheel || DEFAULT_CONFIG.wheel);
+  return segs.map(x => ({ label: String(x.label || '').slice(0, 14), stones: Math.max(0, +x.stones | 0), weight: Math.max(0, +x.weight || 0) }));
+}
+function renderWheelRows() {
+  $('wheelRows').innerHTML = `<div class="wheel-row"><span class="wr-l">項目</span><span class="wr-l">扣靈石</span><span class="wr-l">比重</span><span></span></div>` + wheelSegs().map(x =>
+    `<div class="wheel-row"><input data-k="label" value="${esc(x.label)}" maxlength="14" onchange="wheelSave()"><input data-k="stones" type="number" min="0" value="${x.stones}" onchange="wheelSave()"><input data-k="weight" type="number" min="0" step="1" value="${x.weight}" onchange="wheelSave()"><button class="btn btn-ghost btn-sm" onclick="this.parentNode.remove();wheelSave()">✕</button></div>`).join('');
+}
+window.wheelSave = function () {
+  if (!cls) return;
+  const rows = [...$('wheelRows').querySelectorAll('.wheel-row')].slice(1).map(r => ({ label: r.querySelector('[data-k=label]').value.trim(), stones: +r.querySelector('[data-k=stones]').value || 0, weight: +r.querySelector('[data-k=weight]').value || 0 })).filter(x => x.label);
+  if (rows.length < 2) { showToast('轉盤至少要 2 格', 'error'); return; }
+  try { const v = JSON.parse(localStorage.getItem('beast.st.' + cls._id) || '{}'); v.wheel = rows; localStorage.setItem('beast.st.' + cls._id, JSON.stringify(v)); } catch (e) { }
+};
+window.wheelAddRow = function () { $('wheelRows').insertAdjacentHTML('beforeend', `<div class="wheel-row"><input data-k="label" placeholder="例：全班朗讀一遍" maxlength="14" onchange="wheelSave()"><input data-k="stones" type="number" min="0" value="0" onchange="wheelSave()"><input data-k="weight" type="number" min="0" value="1" onchange="wheelSave()"><button class="btn btn-ghost btn-sm" onclick="this.parentNode.remove();wheelSave()">✕</button></div>`); };
+window.wheelReset = function () { if (!cls) return; try { const v = JSON.parse(localStorage.getItem('beast.st.' + cls._id) || '{}'); delete v.wheel; localStorage.setItem('beast.st.' + cls._id, JSON.stringify(v)); } catch (e) { } renderWheelRows(); };
+function drawWheel(segs) {
+  const n = segs.length, R = 100, a = 2 * Math.PI / n;
+  $('wheelRot').innerHTML = segs.map((x, i) => {
+    const a0 = i * a - Math.PI / 2, a1 = a0 + a, large = a > Math.PI ? 1 : 0;
+    const p0 = [R * Math.cos(a0), R * Math.sin(a0)], p1 = [R * Math.cos(a1), R * Math.sin(a1)], mid = (a0 + a1) / 2, deg = mid * 180 / Math.PI;
+    // 文字沿半徑由內往外排；左半邊翻轉 180° 讓字不倒過來；超過 7 字分兩行
+    const txt = x.label.length > 7 ? [x.label.slice(0, Math.ceil(x.label.length / 2)), x.label.slice(Math.ceil(x.label.length / 2))] : [x.label];
+    const flip = ((deg % 360) + 360) % 360 > 90 && ((deg % 360) + 360) % 360 < 270, fs = n > 6 ? 8 : 9, lh = fs + 2;
+    const lines = txt.map((t, j) => `<tspan x="${flip ? -24 : 24}" dy="${j ? lh : (txt.length > 1 ? -lh / 2 + fs * .35 : fs * .35)}">${esc(t)}</tspan>`).join('');
+    return `<path d="M0 0 L${p0[0]} ${p0[1]} A${R} ${R} 0 ${large} 1 ${p1[0]} ${p1[1]} Z" fill="${WHEEL_COLORS[i % WHEEL_COLORS.length]}" stroke="#6b4a2e" stroke-width="1.5"/>
+      <g transform="rotate(${flip ? deg + 180 : deg})"><text font-size="${fs}" text-anchor="${flip ? 'end' : 'start'}">${lines}</text></g>`;
+  }).join('') + '<circle r="14" fill="#fffaf0" stroke="#6b4a2e" stroke-width="2"/><text text-anchor="middle" dy="5" font-size="13">🔔</text>';
+}
+const wh = { shownAt: 0, spunAt: 0, rot: 0, test: false, segs: null };
+function syncWheel(w) {
+  if (wh.test) return;   // 試轉中不被遠端狀態打斷
+  if (!w.open) { if (wh.shownAt) { $('wheelOverlay').style.display = 'none'; wh.shownAt = 0; } return; }
+  if (wh.shownAt !== w.at) { wh.shownAt = w.at; wh.spunAt = 0; wh.segs = w.segs || wheelSegs(); showWheelCard(false); }
+  if (w.spinAt && wh.spunAt !== w.spinAt) { wh.spunAt = w.spinAt; animateTo(w.idx, w.applied); }
+}
+function showWheelCard(test) {
+  drawWheel(wh.segs); wh.rot = 0; $('wheelRot').style.transition = 'none'; $('wheelRot').style.transform = 'rotate(0deg)';
+  $('wheelResult').textContent = ''; $('wheelResult').className = 'wheel-result'; $('wheelSpinBtn').disabled = false;
+  $('wheelTitle').textContent = test ? '試轉看看（不會扣分）' : '太吵 3 次了！轉轉盤決定懲罰';
+  $('wheelSub').textContent = test ? '這是老師測試用，不會真的執行' : '請老師或一位同學按「轉！」';
+  $('wheelOverlay').style.display = '';
+}
+window.openWheel = function (test) { wh.test = !!test; wh.segs = wheelSegs(); showWheelCard(wh.test); };
+window.spinWheel = async function () {
+  if ($('wheelSpinBtn').disabled) return;
+  $('wheelSpinBtn').disabled = true;
+  const idx = pickWeighted(wh.segs);
+  if (wh.test) { animateTo(idx, ''); return; }
+  const seg = wh.segs[idx]; let applied = '';
+  if (seg.stones > 0) applied = await wheelPenalty(seg);
+  await writeSteward({ wheel: { ...((classState.steward || {}).wheel || {}), spinAt: Date.now(), idx, applied } });
+};
+function animateTo(idx, applied) {
+  const n = wh.segs.length, center = (idx + .5) * 360 / n;
+  const target = wh.rot - (wh.rot % 360) + 360 * 6 + (360 - center);
+  $('wheelRot').style.transition = ''; void $('wheelRot').getBoundingClientRect();
+  $('wheelRot').style.transform = `rotate(${target}deg)`; wh.rot = target;
+  $('wheelSpinBtn').disabled = true; $('wheelSub').textContent = '轉呀轉…';
+  try { const c = sw.ctx || new AudioContext(); for (let i = 0; i < 18; i++) { const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 900; g.gain.value = .05; o.connect(g); g.connect(c.destination); const t0 = c.currentTime + Math.pow(i / 18, 2.2) * 4.6; o.start(t0); o.stop(t0 + .03); } } catch (e) { }
+  setTimeout(() => {
+    const seg = wh.segs[idx];
+    $('wheelResult').innerHTML = `${esc(seg.label)}${applied ? `<small>${esc(applied)}</small>` : ''}`; $('wheelResult').classList.add('show');
+    $('wheelSub').textContent = wh.test ? '試轉結束' : (seg.stones ? '已自動扣除，紀錄寫在每位學生的靈獸紀錄裡' : '請老師帶全班執行');
+    banner('🎡 ' + seg.label, applied || '', '#f5a66e');
+  }, 5100);
+}
+async function wheelPenalty(seg) {
+  let n = 0, total = 0;
+  for (const b of Object.values(beasts)) {
+    try {
+      const r = await tx(b._id, bb => { const d = penaltyStones(bb, seg.stones, cfg); if (!d) return { abort: 'none' }; return { patch: { stones: (bb.stones || 0) - d }, log: { type: 'penalty', stones: -d, reason: `護山管家轉盤：${seg.label}` }, stat: ['penaltyStones', d], extra: d }; }, { touchClass: true });
+      if (!r.aborted) { n++; total += r.extra; }
+    } catch (e) { console.error(e); }
+  }
+  return `${n} 位學生共扣 ${total} 靈石（沒有靈石的不扣）`;
+}
+window.closeWheel = async function () {
+  $('wheelOverlay').style.display = 'none';
+  if (wh.test) { wh.test = false; return; }
+  wh.shownAt = 0;
+  await writeSteward({ wheel: { ...((classState.steward || {}).wheel || {}), open: false } });
+};
 
 // ══════════════════════════════════════════════════════════════
 // 投影模式
