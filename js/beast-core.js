@@ -128,12 +128,12 @@ export const DEFAULT_CONFIG = {
   steward: { dbAbove: 20, holdSec: 1.5, cooldownSec: 5, level: 'mid', resetMin: 10, scaredMin: 10 },
   // 第 3 次太吵 → 懲罰轉盤；stones > 0 代表全班每人扣這麼多靈石（仍受單次扣靈石上限與「不扣成負數」限制），其他是老師現場執行的項目
   wheel: [
-    { label: '全班扣 2 靈石', stones: 2, weight: 2 },
-    { label: '全班罰寫課文一遍', stones: 0, weight: 2 },
-    { label: '全班站立反省 1 分鐘', stones: 0, weight: 1 },
-    { label: '全班安靜默讀 3 分鐘', stones: 0, weight: 2 },
-    { label: '每人背一個單字', stones: 0, weight: 2 },
-    { label: '好運！管家原諒大家', stones: 0, weight: 1 },
+    { label: '全班扣 2 靈石', stones: 2, weight: 4 },
+    { label: '全班罰寫生字一課 3 遍', stones: 0, weight: 3 },
+    { label: '全班站立反省 3 分鐘', stones: 0, weight: 3 },
+    { label: '全班站立反省 5 分鐘', stones: 0, weight: 2 },
+    { label: '好運！管家原諒大家', stones: 0, weight: 2 },
+    { label: '全班罰寫課文一遍', stones: 0, weight: 1 },
   ],
   realReward: [             // 現實獎勵（老師自訂，主管核價）
     { label: '選座位一次', price: 30 }, { label: '作業免寫一題', price: 40 }, { label: '當日小老師', price: 25 },
