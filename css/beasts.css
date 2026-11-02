@@ -354,4 +354,12 @@ body.wide .main{max-width:1480px;}
 .st-layout .tm-quick button{padding:5px 0;font-size:13px;}
 @media(max-width:1100px){.st-layout{grid-template-columns:1fr;}.st-layout .st-timers{grid-template-columns:repeat(3,1fr);}}
 @media(max-width:700px){.st-layout .st-timers{grid-template-columns:1fr;}}
-.st-layout .tm-card.done .tm-time{font-size:34px;margin:6px 0 8px;}
+.st-layout .tm-card.done .tm-time{font-size:30px;margin:10px 0 10px;}
+.tm-ctrl .tm-go.tm-stop{background:linear-gradient(135deg,#ff8a8a,#e35d5d);border-color:#c94444;color:#fff;animation:pop .7s ease-in-out infinite;}
+.tm-card.ringing{animation:angryGlow .8s ease-in-out infinite;}
+/* 管家頁：音量面板移到上方，管家與對話框在下方草地上，露出庭院插圖 */
+.st-stage{min-height:520px;}
+.st-stage .st-panel{order:-1;margin:0 0 10px;background:rgba(255,250,236,.82);}
+.st-stage .st-main{align-items:flex-end;}
+.st-stage .st-bubble{align-self:center;margin-top:0;}
+.st-stage .st-figure{margin-bottom:-14px;}

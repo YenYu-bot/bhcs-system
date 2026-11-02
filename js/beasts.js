@@ -955,14 +955,17 @@ async function writeTimer(i, patch) {
   classState.timers = all; renderTimers();
   await setDoc(doc(db, 'beastClass', cls._id), { timers: all, updatedAt: Date.now() }, { merge: true }).catch(e => showToast('計時器同步失敗：' + authErrMsg(e), 'error'));
 }
-window.tmSet = function (i, min) { delete tmDone[i]; writeTimer(i, { dur: min * 60, left: min * 60, endAt: Date.now() + min * 60000 }); };   // 點分鐘數直接開始
+window.tmSet = function (i, min) { delete tmDone[i]; alarmOff(i, true); writeTimer(i, { dur: min * 60, left: min * 60, endAt: Date.now() + min * 60000, ack: false }); };   // 點分鐘數直接開始
 window.tmToggle = function (i) {
   const t = timersState()[i];
+  if (t.endAt && tmLeft(t) === 0) { tmStop(i); return; }                           // 時間到 → 停止鈴聲
   if (t.endAt) writeTimer(i, { left: tmLeft(t), endAt: 0 });                     // 暫停
   else if ((t.left || 0) > 0) { delete tmDone[i]; writeTimer(i, { endAt: Date.now() + t.left * 1000 }); }   // 繼續
 };
 window.tmAdd = function (i, min) { const t = timersState()[i]; if (t.endAt) writeTimer(i, { endAt: t.endAt + min * 60000, dur: (t.dur || 0) + min * 60 }); else writeTimer(i, { left: Math.max(0, (t.left || 0) + min * 60), dur: Math.max(t.dur || 0, (t.left || 0) + min * 60) }); };
-window.tmReset = function (i) { delete tmDone[i]; writeTimer(i, { endAt: 0, left: 0, dur: 0 }); };
+window.tmReset = function (i) { delete tmDone[i]; alarmOff(i, true); writeTimer(i, { endAt: 0, left: 0, dur: 0, ack: false }); };
+// 停止鈴聲：寫 ack，所有裝置（含投影）一起停；鈴聲至少響滿 3 秒
+window.tmStop = function (i) { writeTimer(i, { ack: true }); };
 window.tmLabel = function (i, v) { writeTimer(i, { label: (v || '').trim().slice(0, 10) || `計時器 ${i + 1}` }); };
 function renderTimers() {
   const box = $('stTimers'); if (!box) return;
@@ -977,17 +980,38 @@ function renderTimers() {
     el.className = 'tm-card' + (done ? ' done' : running ? (left <= 60 ? ' run last' : ' run') : '');
     el.querySelector('.tm-time').textContent = done ? '時間到！' : mmss(left);
     el.querySelector('.tm-bar div').style.width = (t.dur ? Math.max(0, Math.min(100, left / t.dur * 100)) : 0) + '%';
-    const go = el.querySelector('.tm-go'); go.textContent = running ? '⏸ 暫停' : done ? '✓ 時間到' : left > 0 ? '▶ 繼續' : '▶ 開始'; go.disabled = !running && !left;
+    const ringing = done && !t.ack;
+    const go = el.querySelector('.tm-go'); go.textContent = running ? '⏸ 暫停' : ringing ? '🔕 停止' : done ? '✓ 時間到' : left > 0 ? '▶ 繼續' : '▶ 開始'; go.disabled = !running && !left && !ringing;
+    go.classList.toggle('tm-stop', ringing); el.classList.toggle('ringing', ringing);
     const lab = el.querySelector('.tm-label'); if (document.activeElement !== lab) lab.value = t.label;
-    if (done && tmDone[i] !== t.endAt) { tmDone[i] = t.endAt; timerDing(t.label); }
+    if (done && tmDone[i] !== t.endAt) { tmDone[i] = t.endAt; showToast(`⏰ ${t.label} 時間到！`); banner(`⏰ ${t.label}`, '時間到！', '#f5a66e'); }
+    if (ringing) alarmOn(i); else alarmOff(i);
   });
   // 投影上的計時器
   const pj = $('pjTimers');
   if (pj) pj.innerHTML = all.map(t => { const left = tmLeft(t, now); if (!t.endAt && !left) return ''; const done = t.endAt && !left; return `<div class="pj-timer ${done ? 'done' : t.endAt && left <= 60 ? 'last' : ''}"><small>${esc(t.label)}</small>${done ? '時間到！' : mmss(left)}${!t.endAt ? ' ⏸' : ''}</div>`; }).join('');
 }
-function timerDing(label) {
-  try { const c = sw.ctx && sw.ctx.state === 'running' ? sw.ctx : new AudioContext(); [0, .35, .7].forEach(d => { const o = c.createOscillator(), g = c.createGain(); o.type = 'triangle'; o.frequency.value = 880; g.gain.setValueAtTime(.2, c.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, c.currentTime + d + .5); o.connect(g); g.connect(c.destination); o.start(c.currentTime + d); o.stop(c.currentTime + d + .5); }); } catch (e) { }
-  showToast(`⏰ ${label} 時間到！`); banner(`⏰ ${label}`, '時間到！', '#f5a66e');
+// ── 鬧鈴：時間到後一直響（每 1.2 秒一輪「叮咚叮」），直到按停止；至少響滿 3 秒 ──
+let audioCtx = null;
+function actx() { if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } } if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => { }); return audioCtx; }
+document.addEventListener('pointerdown', () => actx(), { passive: true });   // 瀏覽器規定要先有一次點擊才能出聲：任何點擊都順便喚醒音訊
+function chime() {
+  const c = actx(); if (!c) return;
+  const out = c.createDynamicsCompressor(); out.threshold.value = -6; out.connect(c.destination);   // 壓縮器：音量拉大又不破音
+  [[1046.5, 0], [1318.5, .28], [1568, .56], [1318.5, .84]].forEach(([f, d]) => {
+    for (const [type, vol] of [['triangle', .9], ['square', .18]]) {
+      const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.value = f;
+      const t0 = c.currentTime + d; g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(vol, t0 + .01); g.gain.exponentialRampToValueAtTime(.001, t0 + .26);
+      o.connect(g); g.connect(out); o.start(t0); o.stop(t0 + .27);
+    }
+  });
+}
+const alarms = {};
+function alarmOn(i) { if (alarms[i]) return; chime(); alarms[i] = { start: Date.now(), id: setInterval(chime, 1200) }; }
+function alarmOff(i, force) {
+  const a = alarms[i]; if (!a) return;
+  if (!force && Date.now() - a.start < 3000) { if (!a.stopT) a.stopT = setTimeout(() => alarmOff(i, true), 3000 - (Date.now() - a.start)); return; }
+  clearInterval(a.id); clearTimeout(a.stopT); delete alarms[i];
 }
 setInterval(() => { if (cls) renderTimers(); }, 250);
 
