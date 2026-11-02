@@ -218,63 +218,71 @@ table.rep th:first-child,table.rep td:first-child{text-align:left;}
 .deco-chip[disabled]{opacity:.4;cursor:not-allowed;}
 .forge-box{display:flex;align-items:center;gap:12px;background:var(--surface3);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-top:14px;}
 
-/* ── 護山管家（活潑版）── 狀態 class 掛在 #stStage：off / calib / calm / loud / warn / angry / paused */
-.st-stage{position:relative;overflow:hidden;border-radius:22px;padding:22px 22px 18px;margin-bottom:12px;border:2px solid rgba(78,203,141,.35);
-  background:radial-gradient(600px 260px at 20% 0%,rgba(78,203,141,.28),transparent 70%),radial-gradient(500px 240px at 100% 100%,rgba(255,230,163,.16),transparent 70%),#152420;transition:background .6s,border-color .6s;}
-.st-stage.off,.st-stage.paused{filter:saturate(.75);}
-.st-stage.loud{border-color:rgba(255,159,67,.6);background:radial-gradient(600px 260px at 20% 0%,rgba(255,159,67,.3),transparent 70%),#2a2116;}
-.st-stage.warn{border-color:#f6c343;background:radial-gradient(700px 300px at 20% 0%,rgba(246,195,67,.42),transparent 70%),#2c2512;animation:warnGlow 1.2s ease-in-out infinite;}
-.st-stage.angry{border-color:#ff6b6b;background:radial-gradient(700px 300px at 20% 0%,rgba(255,107,107,.5),transparent 70%),#2e1616;animation:angryGlow .9s ease-in-out infinite;}
-@keyframes warnGlow{0%,100%{box-shadow:0 0 0 0 rgba(246,195,67,.0)}50%{box-shadow:0 0 30px 4px rgba(246,195,67,.45)}}
-@keyframes angryGlow{0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,0)}50%{box-shadow:0 0 40px 8px rgba(255,107,107,.6)}}
-.st-deco{position:absolute;inset:0;pointer-events:none;}
-.st-deco span{position:absolute;font-size:20px;opacity:.55;animation:floatLeaf 9s ease-in-out infinite;}
-.st-deco span:nth-child(1){left:6%;top:70%;animation-delay:0s}.st-deco span:nth-child(2){left:30%;top:12%;animation-delay:-2s}.st-deco span:nth-child(3){left:58%;top:78%;animation-delay:-4s}
-.st-deco span:nth-child(4){left:82%;top:20%;animation-delay:-6s}.st-deco span:nth-child(5){left:90%;top:62%;animation-delay:-3s}.st-deco span:nth-child(6){left:46%;top:40%;animation-delay:-7s}
-@keyframes floatLeaf{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-14px) rotate(12deg)}}
-.st-stage.warn .st-deco,.st-stage.angry .st-deco{opacity:.2;}
-.st-main{position:relative;display:flex;align-items:center;gap:20px;}
-.st-figure{width:190px;height:190px;flex:none;}
-.st-figure img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 14px rgba(0,0,0,.45));animation:bob 2.6s ease-in-out infinite;transform-origin:50% 100%;}
-.st-stage.off .st-figure img,.st-stage.paused .st-figure img{animation:bob 4s ease-in-out infinite;opacity:.85;}
-.st-stage.loud .st-figure img{animation:wiggle .35s ease-in-out infinite;}
-.st-stage.warn .st-figure img{animation:hop .6s ease-in-out infinite;filter:drop-shadow(0 0 18px rgba(246,195,67,.8));}
-.st-stage.angry .st-figure img{animation:shake .25s linear infinite;filter:drop-shadow(0 0 22px rgba(255,107,107,.9));}
+/* ── 護山管家（溫馨繪本版）── 狀態 class 掛在 #stStage：off / calib / calm / loud / warn / angry / paused */
+.st-stage{position:relative;overflow:hidden;border-radius:24px;padding:20px 22px 18px;margin-bottom:12px;border:3px solid #e9d8b4;color:#4a3424;
+  background:url('../assets/beasts/steward-scene.jpg') center bottom/cover no-repeat,#f6edd3;min-height:440px;display:flex;flex-direction:column;justify-content:space-between;transition:border-color .6s;}
+.st-stage::after{content:'';position:absolute;inset:0;pointer-events:none;background:transparent;transition:background .6s;}
+.st-stage.off::after,.st-stage.paused::after{background:rgba(255,248,230,.25);}
+.st-stage.loud{border-color:#f5b07a;}
+.st-stage.loud::after{background:rgba(255,170,110,.18);}
+.st-stage.warn{border-color:#f2c14e;animation:warnGlow 1.4s ease-in-out infinite;}
+.st-stage.warn::after{background:rgba(255,214,90,.28);animation:tintPulse 1.4s ease-in-out infinite;}
+.st-stage.angry{border-color:#f29a9a;animation:angryGlow 1.2s ease-in-out infinite;}
+.st-stage.angry::after{background:rgba(255,150,160,.32);animation:tintPulse 1.2s ease-in-out infinite;}
+@keyframes tintPulse{0%,100%{opacity:.75}50%{opacity:1}}
+@keyframes warnGlow{0%,100%{box-shadow:0 0 0 0 rgba(242,193,78,0)}50%{box-shadow:0 0 32px 6px rgba(242,193,78,.55)}}
+@keyframes angryGlow{0%,100%{box-shadow:0 0 0 0 rgba(242,154,154,0)}50%{box-shadow:0 0 36px 8px rgba(242,154,154,.65)}}
+.st-main{position:relative;z-index:1;display:flex;align-items:flex-start;gap:18px;flex:1;}
+.st-figure{width:230px;height:230px;flex:none;align-self:flex-end;margin-bottom:-8px;}
+.st-figure img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 10px rgba(90,60,30,.35));animation:bob 2.8s ease-in-out infinite;transform-origin:50% 100%;}
+.st-stage.paused .st-figure img,.st-stage.off .st-figure img{animation:bob 4.5s ease-in-out infinite;}
+.st-stage.loud .st-figure img{animation:wiggle .5s ease-in-out infinite;}
+.st-stage.warn .st-figure img{animation:hop .8s ease-in-out infinite;}
+.st-stage.angry .st-figure img{animation:shiver .35s linear infinite;}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-@keyframes wiggle{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
-@keyframes hop{0%,100%{transform:translateY(0) scale(1)}40%{transform:translateY(-16px) scale(1.04)}}
+@keyframes wiggle{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+@keyframes hop{0%,100%{transform:translateY(0)}40%{transform:translateY(-14px)}}
+@keyframes shiver{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
 @keyframes shake{0%{transform:translate(0,0) rotate(0)}25%{transform:translate(-5px,2px) rotate(-3deg)}50%{transform:translate(4px,-2px) rotate(3deg)}75%{transform:translate(-3px,1px) rotate(-2deg)}100%{transform:translate(0,0) rotate(0)}}
-.st-bubble{position:relative;flex:1;background:#fffdf5;color:#3a2e1f;border-radius:20px;padding:16px 20px;font-size:20px;font-weight:900;line-height:1.5;box-shadow:0 6px 18px rgba(0,0,0,.25);}
-.st-bubble::before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);border:10px solid transparent;border-right:16px solid #fffdf5;border-left:0;}
-.st-stage.warn .st-bubble{background:#fff3c4;animation:hop 1.2s ease-in-out infinite;}
-.st-stage.warn .st-bubble::before{border-right-color:#fff3c4;}
-.st-stage.angry .st-bubble{background:#ffe0e0;color:#7a1414;}
-.st-stage.angry .st-bubble::before{border-right-color:#ffe0e0;}
-@media(max-width:640px){.st-main{flex-direction:column}.st-bubble::before{display:none}.st-figure{width:150px;height:150px}.st-bubble{font-size:17px}}
-.st-meter{position:relative;height:34px;border-radius:17px;background:rgba(255,255,255,.1);margin:20px 0 10px;overflow:visible;}
-.st-meter-fill{height:100%;width:0;border-radius:17px;background:linear-gradient(90deg,#4ecb8d,#9be26b);transition:width .12s,background .3s;}
-.st-stage.loud .st-meter-fill{background:linear-gradient(90deg,#4ecb8d,#f6c343,#ff9f43);}
-.st-stage.warn .st-meter-fill{background:linear-gradient(90deg,#f6c343,#ff9f43);}
-.st-stage.angry .st-meter-fill{background:linear-gradient(90deg,#ff9f43,#ff4d4d);}
-.st-meter-th{position:absolute;top:-6px;bottom:-6px;width:4px;border-radius:2px;background:#fff;left:70%;box-shadow:0 0 6px rgba(255,255,255,.7);}
-.st-meter-th span{position:absolute;top:-20px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:900;color:#fff;white-space:nowrap;}
-.st-face{position:absolute;top:50%;left:0;transform:translate(-50%,-50%);font-size:34px;transition:left .12s;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5));}
-.st-row{display:flex;align-items:center;gap:16px;margin:6px 0 4px;}
-.st-bells{display:flex;gap:6px;font-size:30px;}
-.st-bells span{filter:grayscale(1) opacity(.35);transition:filter .3s,transform .3s;}
-.st-bells span.lit{filter:none;animation:ring .6s ease-in-out infinite;}
-@keyframes ring{0%,100%{transform:rotate(0)}25%{transform:rotate(-18deg)}75%{transform:rotate(18deg)}}
-.st-stage .steward-status{font-size:16px;margin:0;}
-.st-flash{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;font-size:48px;font-weight:900;color:#fff;text-shadow:0 4px 16px rgba(0,0,0,.6);opacity:0;pointer-events:none;border-radius:20px;}
-.st-flash.show{animation:flashIn 2.6s ease-out;}
-.st-flash.warn{background:rgba(246,195,67,.55);}
-.st-flash.angry{background:rgba(255,77,77,.65);}
-.st-flash small{font-size:20px;margin-top:6px;}
-@keyframes flashIn{0%{opacity:0;transform:scale(.8)}12%{opacity:1;transform:scale(1.05)}25%{transform:scale(1)}80%{opacity:1}100%{opacity:0}}
+.st-bubble{position:relative;flex:1;max-width:620px;margin-top:6px;background:#fffaf0;color:#4a3424;border:3px solid #6b4a2e;border-radius:26px;padding:16px 22px;font-size:22px;font-weight:900;line-height:1.55;box-shadow:0 6px 0 rgba(107,74,46,.18);}
+.st-bubble::before{content:'';position:absolute;left:-18px;bottom:22px;border:12px solid transparent;border-right:18px solid #6b4a2e;border-left:0;}
+.st-bubble::after{content:'';position:absolute;left:-12px;bottom:25px;border:9px solid transparent;border-right:14px solid #fffaf0;border-left:0;}
+.st-stage.warn .st-bubble{background:#fff4c8;animation:hop 1.4s ease-in-out infinite;}
+.st-stage.warn .st-bubble::after{border-right-color:#fff4c8;}
+.st-stage.angry .st-bubble{background:#ffe8e8;}
+.st-stage.angry .st-bubble::after{border-right-color:#ffe8e8;}
+@media(max-width:640px){.st-main{flex-direction:column;align-items:center}.st-bubble::before,.st-bubble::after{display:none}.st-figure{width:170px;height:170px;align-self:center}.st-bubble{font-size:18px}}
+.st-panel{position:relative;z-index:1;background:rgba(255,250,236,.88);border:2px solid #e9d8b4;border-radius:20px;padding:14px 16px 12px;margin-top:10px;backdrop-filter:blur(2px);}
+.st-meter{position:relative;height:30px;border-radius:15px;background:#efe3c6;box-shadow:inset 0 2px 4px rgba(107,74,46,.2);margin:18px 18px 10px;}
+.st-meter-fill{height:100%;width:0;border-radius:15px;background:linear-gradient(90deg,#8fd48a,#c4e27a);transition:width .12s,background .3s;}
+.st-stage.loud .st-meter-fill{background:linear-gradient(90deg,#8fd48a,#f6cf6a,#f5a66e);}
+.st-stage.warn .st-meter-fill{background:linear-gradient(90deg,#f6cf6a,#f5a66e);}
+.st-stage.angry .st-meter-fill{background:linear-gradient(90deg,#f5a66e,#ef8a8a);}
+.st-meter-th{position:absolute;top:-6px;bottom:-6px;width:4px;border-radius:2px;background:#6b4a2e;left:70%;}
+.st-meter-th span{position:absolute;top:-20px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:900;color:#6b4a2e;white-space:nowrap;}
+.st-face{position:absolute;top:50%;left:0;width:54px;height:54px;transform:translate(-50%,-50%);transition:left .12s;filter:drop-shadow(0 2px 3px rgba(90,60,30,.35));}
+.st-row{display:flex;align-items:center;gap:14px;margin:4px 0;}
+.st-bells{display:flex;gap:4px;}
+.st-bells img{width:42px;height:42px;opacity:.6;transition:opacity .3s;}
+.st-bells img.lit{opacity:1;animation:ring .7s ease-in-out infinite;transform-origin:50% 10%;}
+@keyframes ring{0%,100%{transform:rotate(0)}25%{transform:rotate(-16deg)}75%{transform:rotate(16deg)}}
+.st-stage .steward-status{font-size:16px;margin:0;color:#4a3424;}
+.st-stage .steward-controls{margin:10px 0 0;}
+.st-btn{background:#fff;color:#6b4a2e;border:2px solid #e2cfa6;}
+.st-btn:hover{background:#fff7e6;}
+.st-btn:disabled{opacity:.5;}
+.st-btn-main{background:linear-gradient(135deg,#8fd48a,#5fbf86);color:#2f2416;border:2px solid #4f9c6c;}
+.st-flash{position:absolute;inset:0;z-index:3;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;font-size:46px;font-weight:900;color:#4a3424;opacity:0;pointer-events:none;border-radius:20px;}
+.st-flash.show{animation:flashIn 2.8s ease-out;}
+.st-flash.warn{background:rgba(255,240,190,.9);}
+.st-flash.angry{background:rgba(255,226,228,.92);}
+.st-flash img{width:200px;height:200px;object-fit:contain;}
+.st-flash small{font-size:20px;}
+@keyframes flashIn{0%{opacity:0;transform:scale(.85)}12%{opacity:1;transform:scale(1.04)}25%{transform:scale(1)}82%{opacity:1}100%{opacity:0}}
 .st-settings-card summary{cursor:pointer;font-weight:700;color:var(--teal);font-size:13px;}
 /* 投影上的管家也放大一點 */
 .pj-steward{font-size:16px;padding:6px 16px 6px 8px;}
 .pj-steward img{width:52px;height:52px;animation:bob 2.6s ease-in-out infinite;}
-.pj-steward.warn{background:rgba(246,195,67,.22);animation:warnGlow 1.2s ease-in-out infinite;}
+.pj-steward.warn{background:rgba(246,195,67,.22);animation:warnGlow 1.4s ease-in-out infinite;}
 .pj-steward.angry{background:rgba(255,107,107,.3);animation:angryGlow .9s ease-in-out infinite;}
-.pj-steward.angry img{animation:shake .25s linear infinite;}
+.pj-steward.angry img{animation:shiver .35s linear infinite;}

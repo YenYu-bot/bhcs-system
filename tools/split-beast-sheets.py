@@ -3,7 +3,8 @@
 用法：
   v1（白底、四階交疊）：python3 tools/split-beast-sheets.py <資料夾…>
   v2（透明底、等寬分格）：python3 tools/split-beast-sheets.py --v2 <資料夾…>
-      檔名 01-<key>.png…12-<key>.png（四階）、s01-<key>.png…（受驚四階）、13-badges.png（3×4）、14-steward.png（3 欄）、15-items.png（4×2）
+      檔名 01-<key>.png…12-<key>.png（四階）、s01-<key>.png…（受驚四階）、13-badges.png（3×4）、14-steward.png（3 欄）、15-items.png（4×2）、
+      16-steward-moods.png（3×2）、17-steward-scene.png（背景，存 JPG）、18-steward-icons.png（3×2）
 輸出：assets/beasts/{key}-{1..4}.png、steward-{1..3}.png、realm-{1..12}.png、item-{key}.png
 作法：從四個角 floodFill 找出「連到邊緣的白底」去背（白毛靈獸內部的白不會被挖掉），
       橫排靈獸用連通元件拆（各階左右交疊、寬度不等）、格狀徽章／道具用投影空隙切。切不出預期段數會印警告並跳過。"""
@@ -156,7 +157,11 @@ def cells(bgra, cols, rows=1):
     h, w = bgra.shape[:2]; cw, ch = w / cols, h / rows
     return [bgra[int(r * ch):int((r + 1) * ch), int(c * cw):int((c + 1) * cw)] for r in range(rows) for c in range(cols)]
 
+STEWARD_ICONS = ['quiet', 'noisy', 'loud', 'bell-off', 'bell-on', 'tea']
+
 def v2_file(p):
+    if p.name.startswith('17-'):   # 管家背景場景：不透明，存 JPG（照片感的圖量化成 256 色會有色帶）
+        im = Image.open(p).convert('RGB'); im.save(OUT / 'steward-scene.jpg', quality=85, optimize=True, progressive=True); print(p.name, '\n  steward-scene.jpg'); return
     m = re.match(r'(s?)(\d\d)-([a-z]+)?', p.name)
     if not m: return
     scared, idx, key = m.group(1) == 's', int(m.group(2)), m.group(3)
@@ -175,6 +180,12 @@ def v2_file(p):
     elif idx == 14:
         for i, cell in enumerate(cells(bgra, 3)):
             sq = crop_square(cell); save_png(OUT / f'steward-{i + 1}.png', sq) if sq is not None else None; print(f'  steward-{i + 1}.png')
+    elif idx == 16:   # 管家六種心情：揮手／捧茶／聆聽／噓／抱小獸／打瞌睡
+        for i, cell in enumerate(cells(bgra, 3, 2)):
+            sq = crop_square(cell); save_png(OUT / f'steward-mood-{i + 1}.png', sq) if sq is not None else None; print(f'  steward-mood-{i + 1}.png')
+    elif idx == 18:   # 管家圖示
+        for i, cell in enumerate(cells(bgra, 3, 2)):
+            name = STEWARD_ICONS[i]; sq = crop_square(cell); save_png(OUT / f'st-icon-{name}.png', sq) if sq is not None else None; print(f'  st-icon-{name}.png')
     elif idx == 15:
         for i, cell in enumerate(cells(bgra, 4, 2)):
             if i >= len(ITEMS): break
