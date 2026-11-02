@@ -291,3 +291,25 @@ table.rep th:first-child,table.rep td:first-child{text-align:left;}
 .st-sens-t{font-weight:900;color:#4a3424;}
 .st-sens input[type=range]{width:180px;accent-color:#5fbf86;}
 .st-sens b{min-width:48px;color:#4a3424;}
+
+/* ── 懲罰轉盤 ── */
+.wheel-overlay{position:fixed;inset:0;z-index:700;background:rgba(40,28,16,.55);display:flex;align-items:center;justify-content:center;padding:16px;}
+.wheel-card{background:#fffaf0;color:#4a3424;border:4px solid #e9d8b4;border-radius:28px;padding:20px 24px;width:min(560px,100%);max-height:96vh;overflow:auto;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+.wheel-head{display:flex;align-items:center;gap:12px;text-align:left;}
+.wheel-head img{width:90px;height:90px;object-fit:contain;animation:hop .9s ease-in-out infinite;}
+.wheel-title{font-size:22px;font-weight:900;}
+.wheel-sub{font-size:14px;color:#8a6a4a;}
+.wheel-wrap{position:relative;width:min(420px,80vw);margin:10px auto 6px;}
+.wheel-wrap svg{width:100%;display:block;filter:drop-shadow(0 6px 10px rgba(90,60,30,.3));}
+.wheel-pointer{position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:40px;color:#e0573c;z-index:2;text-shadow:0 2px 0 #fff;line-height:1;}
+#wheelRot{transition:transform 5s cubic-bezier(.12,.75,.1,1);}
+#wheelRot text{font-family:'Noto Sans TC',sans-serif;font-weight:900;fill:#4a3424;}
+.wheel-result{min-height:44px;font-size:26px;font-weight:900;color:#c2410c;}
+.wheel-result.show{animation:flashIn 1.2s ease-out forwards;}
+.wheel-result small{display:block;font-size:14px;color:#8a6a4a;font-weight:700;}
+.wheel-actions{display:flex;gap:10px;justify-content:center;margin-top:8px;}
+.wheel-actions .btn{font-size:16px;padding:10px 22px;}
+.wheel-row{display:grid;grid-template-columns:1fr 90px 80px auto;gap:6px;margin-bottom:6px;align-items:center;}
+.wheel-row input{background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:var(--text);padding:6px 8px;font-family:inherit;font-size:13px;}
+.wheel-row .wr-l{font-size:11px;color:var(--muted);}
+.wheel-actions .btn:disabled{opacity:.45;cursor:not-allowed;}
