@@ -782,7 +782,7 @@ function renderStewardRemote() {
   // 狀態改變 → 大字閃爍（每台裝置都會觸發，投影那台也看得到）
   const key = `${st.strikes || 0}|${st.scaredUntil || 0}`;
   if (sw.lastKey !== undefined && key !== sw.lastKey) {
-    if (scaredVisual() && (st.scaredUntil || 0) !== sw.lastScared) flash('angry', '😱 全班靈獸受驚了！', st.scaredLevel === 'light' ? '大家安靜一下，靈獸好害怕' : '接下來 10 分鐘加分減半');
+    if (scaredVisual() && (st.scaredUntil || 0) !== sw.lastScared) flash('angry', '小靈獸受驚了…', st.scaredLevel === 'light' ? '大家安靜一下，靈獸好害怕' : '接下來 10 分鐘加分減半');
     else if (st.strikes === 1) flash('warn', '🤫 噓～第一次警告！', '再吵一次，靈獸就要受驚囉');
   }
   sw.lastKey = key; sw.lastScared = st.scaredUntil || 0;
@@ -790,7 +790,7 @@ function renderStewardRemote() {
   const pj = $('pjSteward');
   if (!st.on) { pj.style.display = 'none'; return; }
   pj.style.display = ''; pj.className = 'pj-steward ' + (scaredVisual() ? 'angry' : st.strikes ? 'warn' : '');
-  pj.innerHTML = `<img src="assets/beasts/steward-${scaredVisual() ? 3 : st.strikes ? 2 : 1}.png" onerror="this.onerror=null;this.src=this.src.replace('.png','.svg')"> ${scaredVisual() ? '😱 靈獸受驚中' : st.paused ? '⏸ 老師講課中' : st.strikes ? '🤫 噓～已警告 1 次' : '😊 大家好安靜'}`;
+  pj.innerHTML = `<img src="assets/beasts/steward-mood-${scaredVisual() ? 5 : st.strikes ? 4 : st.paused ? 6 : 2}.png" alt=""> ${scaredVisual() ? '😱 靈獸受驚中' : st.paused ? '⏸ 老師講課中' : st.strikes ? '🤫 噓～已警告 1 次' : '😊 大家好安靜'}`;
 }
 // ── 管家畫面：依狀態換圖、對話、背景、鈴鐺 ──
 const BUBBLES = {
@@ -799,8 +799,8 @@ const BUBBLES = {
   calm: ['好安靜喔，大家好專心！🌿', '靈獸們都在乖乖修煉呢 ✨', '這樣的音量剛剛好 😊', '安靜的教室，靈氣最濃！'],
   loud: ['咦？有點吵了喔… 👀', '小聲一點點～', '靈獸豎起耳朵了！'],
   warn: ['噓～第一次警告！🤫<br>再吵一次，靈獸就要受驚囉！'],
-  angry: ['哎呀！全班靈獸都嚇壞了 😱<br>大家安靜下來，讓牠們冷靜一下…'],
-  paused: ['老師講課中，我先休息一下 ☕'],
+  angry: ['小靈獸們嚇得發抖了…<br>我們一起安靜下來，陪牠們冷靜一下好嗎？'],
+  paused: ['老師講課中，我先打個盹… 💤'],
 };
 function stewardView(force) {
   const st = classState.steward || {};
@@ -808,18 +808,23 @@ function stewardView(force) {
   const stage = $('stStage'); if (!stage) return;
   if (stage.dataset.state !== state) {
     stage.className = 'st-stage ' + state; stage.dataset.state = state; sw.bubbleAt = 0;
-    $('stImg').src = `assets/beasts/steward-${state === 'angry' ? 3 : state === 'warn' || state === 'loud' ? 2 : 1}.png`;
+    $('stImg').src = `assets/beasts/steward-mood-${STEWARD_MOOD[state]}.png`;
   }
   const now = Date.now();
   if (!sw.bubbleAt || now - sw.bubbleAt > 8000) { const list = BUBBLES[state]; $('stBubble').innerHTML = list[Math.floor(Math.random() * list.length)]; sw.bubbleAt = now; }
-  $('bell1').classList.toggle('lit', state === 'warn' || state === 'angry'); $('bell2').classList.toggle('lit', state === 'angry');
+  const b1 = state === 'warn' || state === 'angry', b2 = state === 'angry';
+  for (const [id, on] of [['bell1', b1], ['bell2', b2]]) { const el = $(id); if (el.classList.contains('lit') !== on) { el.classList.toggle('lit', on); el.src = `assets/beasts/st-icon-bell-${on ? 'on' : 'off'}.png`; } }
+  if (state === 'paused' || state === 'off') setFace('tea');
 }
+// 管家心情圖：1 揮手、2 捧茶、3 聆聽、4 噓、5 抱小獸安撫、6 打瞌睡
+const STEWARD_MOOD = { off: 1, calib: 3, calm: 2, loud: 3, warn: 4, angry: 5, paused: 6 };
+function setFace(name) { const el = $('stFace'); if (el.dataset.f !== name) { el.dataset.f = name; el.src = `assets/beasts/st-icon-${name}.png`; } }
 function setMeter(pct, ratio) {
   $('meter').style.width = pct + '%'; $('stFace').style.left = pct + '%';
-  $('stFace').textContent = ratio >= 1 ? '😣' : ratio >= .8 ? '😯' : ratio >= .5 ? '🙂' : '😊';
+  if (!sw.paused) setFace(ratio >= 1 ? 'loud' : ratio >= .8 ? 'noisy' : 'quiet');
 }
 function flash(kind, main, sub) {
-  const f = $('stFlash'); f.className = 'st-flash ' + kind; f.innerHTML = `${main}<small>${sub}</small>`; void f.offsetWidth; f.classList.add('show');
+  const f = $('stFlash'); f.className = 'st-flash ' + kind; f.innerHTML = `<img src="assets/beasts/steward-mood-${kind === 'angry' ? 5 : 4}.png" alt="">${main}<small>${sub}</small>`; void f.offsetWidth; f.classList.add('show');
   banner(main, sub, kind === 'angry' ? '#ff6b6b' : '#f6c343');
 }
 
