@@ -313,3 +313,4 @@ table.rep th:first-child,table.rep td:first-child{text-align:left;}
 .wheel-row input{background:var(--surface3);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:var(--text);padding:6px 8px;font-family:inherit;font-size:13px;}
 .wheel-row .wr-l{font-size:11px;color:var(--muted);}
 .wheel-actions .btn:disabled{opacity:.45;cursor:not-allowed;}
+.beast-foot .stone.debt{color:var(--red);font-weight:900;}

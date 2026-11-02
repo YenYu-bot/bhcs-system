@@ -15,7 +15,7 @@ import { REALMS, STAGE_NAMES, TRIAL_HINTS, BEASTS, BEAST_MAP, SHOP, SHOP_MAP, DE
   weekKey, dayKey, monthKey, multiplier, capWeekPts, capWeekStones, capHoldStones, realmFor, realmInfo, nextRealm, progress,
   trialPending, trialCooldownLeft, newBeast, normName, rollWeek, applyPts, penaltyPts, penaltyStones, grantStones,
   stageOf, imgSrc, imgFallback, imgScared, fmtTs, randomId,
-  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars, pickWeighted } from "./beast-core.js";
+  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars, pickWeighted, stoneText } from "./beast-core.js";
 import { qrSvg } from "./vendor/qr.js";
 
 const firebaseConfig = {
@@ -203,7 +203,7 @@ function cardHtml(b, name, pj = false) {
     <div class="beast-pet">${esc(b.petName || info.name)}</div>${title ? `<div class="beast-title">${esc(title)}</div>` : ''}
     <div class="beast-realm ${pend ? 'trial' : ''}">${r.name}${pend ? ' · 待試煉' : ''}</div>
     <div class="progress"><div class="progress-bar" style="width:${Math.round(progress(b.pts, b.realm) * 100)}%"></div></div>
-    <div class="beast-foot"><span>${b.pts}${nxt ? '/' + nxt.pts : ''} 靈氣</span><span class="stone">💎 ${b.stones || 0}</span></div>
+    <div class="beast-foot"><span>${b.pts}${nxt ? '/' + nxt.pts : ''} 靈氣</span><span class="stone ${(b.stones || 0) < 0 ? 'debt' : ''}">💎 ${stoneText(b.stones)}</span></div>
   </div>`;
 }
 function renderGrid() {
@@ -337,7 +337,7 @@ window.penalize = async function (beastId, kind, n, reason) {
   try {
     const r = await tx(beastId, b => {
       if (kind === 'pts') { const d = penaltyPts(b, n, cfg); if (!d) return { abort: '靈氣已在境界門檻，無法再扣' }; return { patch: { pts: b.pts - d }, log: { type: 'penalty', delta: -d, reason }, stat: ['penaltyPts', d] }; }
-      const d = penaltyStones(b, n, cfg); if (!d) return { abort: '沒有靈石可扣' };
+      const d = penaltyStones(b, n, cfg); if (!d) return { abort: `已經欠到上限（-${cfg.caps.debtMax ?? 50}）` };
       return { patch: { stones: (b.stones || 0) - d }, log: { type: 'penalty', stones: -d, reason }, stat: ['penaltyStones', d] };
     }, { touchClass: true });
     if (r.aborted) showToast(r.aborted, 'error'); else showToast('已記錄懲罰');
@@ -480,7 +480,7 @@ window.undoLog = async function (beastId, logId) {
       const sameWeek = weekKey(l.ts) === weekKey();
       const patch = { updatedAt: Date.now() };
       if (l.delta) { patch.pts = Math.max(0, b.pts - l.delta); if (sameWeek && l.delta > 0 && l.type === 'pts') patch.weekPts = Math.max(0, (b.weekPts || 0) - l.delta); }
-      if (l.stones) { patch.stones = Math.max(0, (b.stones || 0) - l.stones); if (sameWeek && l.stones > 0) patch.weekStones = Math.max(0, (b.weekStones || 0) - l.stones); }
+      if (l.stones) { patch.stones = (b.stones || 0) - l.stones; if (sameWeek && l.stones > 0) patch.weekStones = Math.max(0, (b.weekStones || 0) - l.stones); }
       const nb = { ...b, ...patch }; patch.realm = realmFor(nb.pts, nb.trials || {});
       t.update(bref, patch);
       t.update(lref, { undone: true, undoneAt: Date.now(), undoneBy: me.id });
@@ -536,7 +536,7 @@ function renderStudent(full = true) {
   $('smRealm').textContent = `第 ${b.realm} 境 ${r.name} · ${STAGE_NAMES[r.stage]}${info.name} · ${info.attr}`;
   $('smBar').style.width = Math.round(progress(b.pts, b.realm) * 100) + '%'; $('smBar').style.setProperty('--c', info.color);
   const wk = rollWeek(b); const wp = wk.weekPts ?? b.weekPts ?? 0, ws = wk.weekStones ?? b.weekStones ?? 0;
-  $('smMeta').innerHTML = `靈氣 <b>${b.pts}</b>${nxt ? `／下一境 ${nxt.name} ${nxt.pts}` : '（已登頂）'} · 靈石 <b style="color:var(--stone)">💎 ${b.stones || 0}</b><br>
+  $('smMeta').innerHTML = `靈氣 <b>${b.pts}</b>${nxt ? `／下一境 ${nxt.name} ${nxt.pts}` : '（已登頂）'} · 靈石 <b style="color:${(b.stones || 0) < 0 ? 'var(--red)' : 'var(--stone)'}">💎 ${stoneText(b.stones)}</b>${(b.stones || 0) < 0 ? '（之後賺到的靈石會先還債）' : ''}<br>
     本週靈氣 ${wp}/${capWeekPts(b.courseCount, cfg)} · 本週靈石 ${ws}/${capWeekStones(b.courseCount, cfg)} · ${b.courseCount} 門課 ×${mult}<br>
     天賦「${info.talent}」· 已習得 ${[2, 4, 7, 10].filter(x => b.realm >= x).map(x => info.skills[[2, 4, 7, 10].indexOf(x)]).join('、') || '尚無招式'}${b.realm === 12 ? ` · 神通「${info.ultimate}」` : ''}`;
   document.querySelectorAll('#smTabs .tab').forEach(t => t.classList.toggle('active', t.dataset.st === stTab));
@@ -549,7 +549,7 @@ function renderStudent(full = true) {
       <div class="custom-row"><input class="field-input" id="awReason" placeholder="自訂原因"><input class="field-input" id="awPts" type="number" min="1" max="10" value="1"><button class="btn btn-teal btn-sm" onclick="award('${id}',+document.getElementById('awPts').value,document.getElementById('awReason').value.trim())">加分</button></div>
       ${scaredNow() && !(b.items || {}).dingxin ? '<div class="hint">😨 全班受驚中：加分減半（無條件進位）。</div>' : ''}${b.julingActive ? '<div class="hint">✨ 聚靈丹生效中：下一次加分 ×2。</div>' : ''}`;
   } else if (stTab === 'penalty') {
-    $('st-penalty').innerHTML = `<div class="hint" style="margin:0 0 10px">靈氣最多扣到目前境界門檻（${r.pts}），不會跌境；單次最多扣 ${cfg.caps.penaltyPtsMax} 靈氣、${cfg.caps.penaltyStonesMax} 靈石。原因必填，當天可撤銷。</div>
+    $('st-penalty').innerHTML = `<div class="hint" style="margin:0 0 10px">靈氣最多扣到目前境界門檻（${r.pts}），不會跌境；單次最多扣 ${cfg.caps.penaltyPtsMax} 靈氣、${cfg.caps.penaltyStonesMax} 靈石；靈石不夠會變成欠債（最多欠 ${cfg.caps.debtMax ?? 50}），之後賺到的先還。原因必填，當天可撤銷。</div>
       <div class="custom-row"><select class="select-input" id="pnKind" style="width:110px;flex:none"><option value="pts">扣靈氣</option><option value="stones">扣靈石</option></select>
         <select class="select-input" id="pnReason">${cfg.penaltyReasons.map(x => `<option>${esc(x)}</option>`).join('')}<option value="__c">自訂…</option></select>
         <input class="field-input" id="pnCustom" placeholder="自訂原因" style="display:none"></div>
@@ -685,7 +685,7 @@ window.awardTask = async function (taskId, card) {
         if (d <= 0) return { abort: 'cap' };
         const rolled = rollWeek(bb);
         return { patch: { ...rolled, stones: (bb.stones || 0) + d, weekStones: (rolled.weekStones ?? bb.weekStones ?? 0) + d }, extra: d,
-          log: { type: 'stones', stones: d, reason: `任務：${t.title}${d < t.stones ? `（達上限，只入帳 ${d}）` : ''}` },
+          log: { type: 'stones', stones: d, reason: `任務：${t.title}${d < t.stones ? `（達上限，只入帳 ${d}）` : ''}${(bb.stones || 0) < 0 ? `（先還欠款 ${Math.min(d, -(bb.stones || 0))}）` : ''}` },
           csPatch: { issued: { weekKey: wk, total: used + d } }, stat: ['stonesIssued', d] };
       }, { touchClass: true });
       if (r.aborted) { none.push(n); continue; }
@@ -924,14 +924,14 @@ function animateTo(idx, applied) {
   }, 5100);
 }
 async function wheelPenalty(seg) {
-  let n = 0, total = 0;
+  let n = 0, total = 0, debt = 0;
   for (const b of Object.values(beasts)) {
     try {
       const r = await tx(b._id, bb => { const d = penaltyStones(bb, seg.stones, cfg); if (!d) return { abort: 'none' }; return { patch: { stones: (bb.stones || 0) - d }, log: { type: 'penalty', stones: -d, reason: `護山管家轉盤：${seg.label}` }, stat: ['penaltyStones', d], extra: d }; }, { touchClass: true });
-      if (!r.aborted) { n++; total += r.extra; }
+      if (!r.aborted) { n++; total += r.extra; if ((b.stones || 0) - r.extra < 0) debt++; }
     } catch (e) { console.error(e); }
   }
-  return `${n} 位學生共扣 ${total} 靈石（沒有靈石的不扣）`;
+  return `${n} 位學生共扣 ${total} 靈石${debt ? `，其中 ${debt} 位不夠扣、變成欠債（之後賺到先還）` : ''}`;
 }
 window.closeWheel = async function () {
   $('wheelOverlay').style.display = 'none';
@@ -965,7 +965,7 @@ function renderConfig() {
   $('cfgReasons').innerHTML = cfg.reasons.map((_, i) => row(cfg.reasons, i, 'reasons')).join('');
   $('cfgPenalty').innerHTML = cfg.penaltyReasons.map((_, i) => row(cfg.penaltyReasons, i, 'penaltyReasons')).join('');
   $('cfgReal').innerHTML = cfg.realReward.map((_, i) => row(cfg.realReward, i, 'realReward')).join('');
-  const capLabels = { weekPts: '每週靈氣上限', weekStones: '每週靈石入帳上限', holdStones: '持有靈石上限', taskMax: '單一任務最多靈石', classWeekPerStudent: '每班每週總額（×人數）', penaltyPtsMax: '單次最多扣靈氣', penaltyStonesMax: '單次最多扣靈石', classGoalPts: '全班目標每人加' };
+  const capLabels = { weekPts: '每週靈氣上限', weekStones: '每週靈石入帳上限', holdStones: '持有靈石上限', taskMax: '單一任務最多靈石', classWeekPerStudent: '每班每週總額（×人數）', penaltyPtsMax: '單次最多扣靈氣', penaltyStonesMax: '單次最多扣靈石', debtMax: '靈石最多欠多少', classGoalPts: '全班目標每人加' };
   $('cfgCaps').innerHTML = Object.entries(capLabels).map(([k, l]) => `<label>${l}<input type="number" data-cap="${k}" value="${cfg.caps[k]}"></label>`).join('');
   [0, 1, 2].forEach(i => $('mult' + i).value = cfg.mult[i]);
   $('cfgShop').innerHTML = SHOP.map(s => `<div class="cfg-row"><span style="flex:1;font-size:13px">${s.name}<span class="hint" style="margin:0 0 0 8px;display:inline">${s.desc}</span></span><input class="field-input" type="number" data-shop="${s.key}" value="${(cfg.shopPrice || {})[s.key] ?? s.price}"></div>`).join('')
