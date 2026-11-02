@@ -286,3 +286,8 @@ table.rep th:first-child,table.rep td:first-child{text-align:left;}
 .pj-steward.warn{background:rgba(246,195,67,.22);animation:warnGlow 1.4s ease-in-out infinite;}
 .pj-steward.angry{background:rgba(255,107,107,.3);animation:angryGlow .9s ease-in-out infinite;}
 .pj-steward.angry img{animation:shiver .35s linear infinite;}
+
+.st-sens{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 8px;font-size:13px;color:#6b4a2e;}
+.st-sens-t{font-weight:900;color:#4a3424;}
+.st-sens input[type=range]{width:180px;accent-color:#5fbf86;}
+.st-sens b{min-width:48px;color:#4a3424;}

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611020910">
-<link rel="stylesheet" href="css/beasts.css?v=202611020910">
+<link rel="stylesheet" href="css/app.css?v=202611021209">
+<link rel="stylesheet" href="css/beasts.css?v=202611021209">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -97,6 +97,14 @@
             <div class="st-meter-th" id="meterTh"><span>太吵線</span></div>
             <img class="st-face" id="stFace" src="assets/beasts/st-icon-quiet.png" alt="">
           </div>
+          <div class="st-sens">
+            <span class="st-sens-t">太吵界線</span>
+            <span class="st-sens-end">寬鬆</span>
+            <input type="range" id="stSens" min="1" max="5" step="1" value="3" oninput="setSens(+this.value)">
+            <span class="st-sens-end">嚴格</span>
+            <b id="stSensLabel">普通</b>
+            <button class="btn st-btn btn-sm" onclick="recalibrate()" title="教室平常的音量變了（例如開了冷氣、換了教室）就重新量一次">🎧 重新校準</button>
+          </div>
           <div class="st-row">
             <div class="st-bells" title="超標次數：第 1 次警告、第 2 次靈獸受驚"><img id="bell1" src="assets/beasts/st-icon-bell-off.png" alt=""><img id="bell2" src="assets/beasts/st-icon-bell-off.png" alt=""></div>
             <div class="steward-status" id="stewardStatus">尚未開啟</div>
@@ -113,10 +121,10 @@
         <summary>⚙️ 管家設定</summary>
         <div class="hint" style="margin:8px 0 10px">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」；安靜一段時間會自動歸零。</div>
         <div class="steward-settings">
-          <label>門檻：環境音 +<input type="number" id="stDb" min="5" max="40" step="1"> dB</label>
-          <label>持續<input type="number" id="stHold" min="0.5" max="5" step="0.5"> 秒才算</label>
-          <label>冷卻<input type="number" id="stCool" min="1" max="30" step="1"> 秒</label>
-          <label>懲罰<select id="stLevel"><option value="light">輕：只播動畫</option><option value="mid">中：10 分鐘加分減半</option><option value="heavy">重：減半＋取消本週全班目標</option></select></label>
+          <label>門檻：環境音 +<input type="number" id="stDb" min="5" max="40" step="1" onchange="saveStSettings()"> dB</label>
+          <label>持續<input type="number" id="stHold" min="0.5" max="5" step="0.5" onchange="saveStSettings()"> 秒才算</label>
+          <label>冷卻<input type="number" id="stCool" min="1" max="30" step="1" onchange="saveStSettings()"> 秒</label>
+          <label>懲罰<select id="stLevel" onchange="saveStSettings()"><option value="light">輕：只播動畫</option><option value="mid">中：10 分鐘加分減半</option><option value="heavy">重：減半＋取消本週全班目標</option></select></label>
         </div>
       </details>
     </div>
@@ -204,6 +212,6 @@
   <div class="pj-banner" id="pjBanner"></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611020910"></script>
+<script type="module" src="js/beasts.js?v=202611021209"></script>
 </body>
 </html>

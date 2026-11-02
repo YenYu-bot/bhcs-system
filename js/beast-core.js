@@ -125,7 +125,7 @@ export const DEFAULT_CONFIG = {
   mult: [1, 1.5, 1.8],      // 第 1、2、3 門課的倍率；第 4 門起不再增加
   swapFreeMaxRealm: 3,      // 免費換獸限此境界以前
   trialCooldownDays: 7,
-  steward: { dbAbove: 15, holdSec: 1, cooldownSec: 5, level: 'mid', resetMin: 10, scaredMin: 10 },
+  steward: { dbAbove: 20, holdSec: 1.5, cooldownSec: 5, level: 'mid', resetMin: 10, scaredMin: 10 },
   realReward: [             // 現實獎勵（老師自訂，主管核價）
     { label: '選座位一次', price: 30 }, { label: '作業免寫一題', price: 40 }, { label: '當日小老師', price: 25 },
   ],
