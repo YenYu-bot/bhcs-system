@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611021330">
-<link rel="stylesheet" href="css/beasts.css?v=202611021330">
+<link rel="stylesheet" href="css/app.css?v=202611021335">
+<link rel="stylesheet" href="css/beasts.css?v=202611021335">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -129,6 +129,11 @@
           <label>冷卻<input type="number" id="stCool" min="1" max="30" step="1" onchange="saveStSettings()"> 秒</label>
           <label>懲罰<select id="stLevel" onchange="saveStSettings()"><option value="light">輕：只播動畫</option><option value="mid">中：10 分鐘加分減半</option><option value="heavy">重：減半＋取消本週全班目標</option></select></label>
         </div>
+        <div class="card-title" style="margin:16px 0 6px">⏰ 計時器鈴聲</div>
+        <div class="steward-settings">
+          <label><input type="radio" name="alarmMode" value="manual" onchange="setAlarmMode(this.value)" style="width:auto"> 一直響，直到老師按「停止」</label>
+          <label><input type="radio" name="alarmMode" value="auto" onchange="setAlarmMode(this.value)" style="width:auto"> 響 3 秒自動停</label>
+        </div>
         <div class="card-title" style="margin:16px 0 6px">🎡 懲罰轉盤（第 3 次太吵）</div>
         <div class="hint" style="margin:0 0 8px">「扣靈石」填數字＝全班每人扣這麼多（不會扣成負數）；填 0 就是老師現場執行的項目。比重越大越容易轉到。每班各自記在這台裝置。</div>
         <div id="wheelRows"></div>
@@ -230,6 +235,6 @@
   <div class="pj-banner" id="pjBanner"></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611021330"></script>
+<script type="module" src="js/beasts.js?v=202611021335"></script>
 </body>
 </html>

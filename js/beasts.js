@@ -1007,11 +1007,18 @@ function chime() {
   });
 }
 const alarms = {};
-function alarmOn(i) { if (alarms[i]) return; chime(); alarms[i] = { start: Date.now(), id: setInterval(chime, 1200) }; }
+// 鈴聲模式（存在這台裝置）：manual = 響到按停止；auto = 響 3 秒自動停
+function alarmMode() { try { return localStorage.getItem('beast.alarmMode') || 'manual'; } catch (e) { return 'manual'; } }
+window.setAlarmMode = function (v) { try { localStorage.setItem('beast.alarmMode', v); } catch (e) { } showToast(v === 'auto' ? '計時器鈴聲：響 3 秒自動停' : '計時器鈴聲：響到按停止'); };
+document.querySelectorAll('input[name=alarmMode]').forEach(r => { r.checked = r.value === alarmMode(); });
+function alarmOn(i) {
+  if (alarms[i]) return; chime(); alarms[i] = { start: Date.now(), id: setInterval(chime, 1200) };
+  if (alarmMode() === 'auto') alarms[i].autoT = setTimeout(() => tmStop(i), 3000);   // 自動模式：3 秒後自動按停止（也會同步到投影）
+}
 function alarmOff(i, force) {
   const a = alarms[i]; if (!a) return;
   if (!force && Date.now() - a.start < 3000) { if (!a.stopT) a.stopT = setTimeout(() => alarmOff(i, true), 3000 - (Date.now() - a.start)); return; }
-  clearInterval(a.id); clearTimeout(a.stopT); delete alarms[i];
+  clearInterval(a.id); clearTimeout(a.stopT); clearTimeout(a.autoT); delete alarms[i];
 }
 setInterval(() => { if (cls) renderTimers(); }, 250);
 
