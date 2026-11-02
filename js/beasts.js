@@ -705,17 +705,31 @@ function stSettings() { return { dbAbove: +$('stDb').value || cfg.steward.dbAbov
 window.toggleSteward = async function () {
   if (sw.on) { stopSteward(); return; }
   if (!cls) { showToast('請先選班級', 'error'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { micFail('這個瀏覽器不支援麥克風（請用 Chrome 或 Edge，並確認網址是 https）'); return; }
+  // AudioContext 必須在按鈕點擊的同一個動作裡建立／喚醒，等 getUserMedia 回來才建會被瀏覽器暫停（音量條不動）
+  const AC = window.AudioContext || window.webkitAudioContext;
+  sw.ctx = new AC(); sw.ctx.resume().catch(() => { });
+  $('stewardStatus').textContent = '請在瀏覽器跳出的視窗按「允許」使用麥克風…';
   try {
-    sw.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    sw.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    try { sw.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
+    catch (e) { if (e.name === 'OverconstrainedError' || e.name === 'TypeError') sw.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); else throw e; }
+    if (sw.ctx.state !== 'running') await sw.ctx.resume();
     const src = sw.ctx.createMediaStreamSource(sw.stream); sw.an = sw.ctx.createAnalyser(); sw.an.fftSize = 2048; src.connect(sw.an); sw.buf = new Float32Array(sw.an.fftSize);
     sw.on = true; sw.paused = false; sw.baseline = null; sw.samples = []; sw.holdStart = 0; sw.lastStrike = 0;
     $('stewardToggle').textContent = '🔕 關閉管家'; $('stewardPause').disabled = false;
     $('stewardStatus').textContent = '校準中…請保持教室平常的安靜程度 10 秒';
     sw.timer = setInterval(stewardTick, 100);
     await writeSteward({ on: true, strikes: 0, by: me.id, paused: false });
-  } catch (e) { console.error(e); showToast('無法使用麥克風：' + (e.message || e), 'error'); }
+  } catch (e) {
+    console.error(e);
+    try { sw.ctx.close(); } catch (_) { }
+    const why = { NotAllowedError: '麥克風權限被拒絕。點網址列左邊的鎖頭／設定圖示 →「麥克風」改成「允許」，重新整理後再按一次。', SecurityError: '麥克風權限被拒絕。點網址列左邊的鎖頭圖示 →「麥克風」改成「允許」。',
+      NotFoundError: '找不到麥克風。請確認這台電腦有接麥克風（筆電內建或 USB／耳機麥克風），並在系統音效設定裡沒有被停用。',
+      NotReadableError: '麥克風被其他程式占用（例如 Google Meet、LINE、Teams）。關掉那個程式後再試。', AbortError: '麥克風啟動被中斷，請再按一次。' }[e.name];
+    micFail(why || ('無法使用麥克風：' + (e.message || e.name || e)));
+  }
 };
+function micFail(msg) { $('stewardStatus').textContent = '❌ ' + msg; showToast('無法開啟麥克風，原因見管家面板', 'error'); }
 function stopSteward(silent) {
   if (!sw.on) return;
   clearInterval(sw.timer); sw.on = false;
