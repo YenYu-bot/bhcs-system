@@ -632,6 +632,7 @@ window.doPenalty = function (id, n) {
 window.showTab = function (t) {
   document.querySelectorAll('#tabs .tab').forEach(x => x.classList.toggle('active', x.dataset.tab === t));
   ['class', 'tasks', 'steward', 'config', 'report', 'hall'].forEach(x => $('tab-' + x).style.display = x === t ? '' : 'none');
+  document.body.classList.toggle('wide', t === 'steward');
   $('classBar').style.display = ['class', 'tasks', 'steward'].includes(t) ? '' : 'none';
   if (t === 'config') renderConfig(); if (t === 'report') loadReport(); if (t === 'hall') loadHall();
 };
