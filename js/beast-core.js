@@ -120,6 +120,7 @@ export const DEFAULT_CONFIG = {
     classWeekPerStudent: 30,// 每班每週發放總額 = 人數 × 此值
     penaltyPtsMax: 10,      // 單次最多扣靈氣
     penaltyStonesMax: 20,   // 單次最多扣靈石
+    debtMax: 50,            // 靈石最多欠到 -50（扣靈石可以扣成負數，之後賺到的靈石先還債）
     classGoalPts: 2,        // 全班目標每人加
   },
   mult: [1, 1.5, 1.8],      // 第 1、2、3 門課的倍率；第 4 門起不再增加
@@ -245,9 +246,13 @@ export function penaltyPts(b, want, cfg) {
   const max = Math.min(cfg.caps.penaltyPtsMax, Math.max(0, b.pts - floor));
   return Math.min(Math.max(0, want | 0), max);
 }
+// 扣靈石：可以扣成負數（欠債），但單次有上限、最多欠到 -debtMax
 export function penaltyStones(b, want, cfg) {
-  return Math.min(Math.max(0, want | 0), cfg.caps.penaltyStonesMax, Math.max(0, b.stones || 0));
+  const debtMax = cfg.caps.debtMax ?? 50;
+  return Math.max(0, Math.min(Math.max(0, want | 0), cfg.caps.penaltyStonesMax, (b.stones || 0) + debtMax));
 }
+// 顯示用：負數加上「欠」字
+export function stoneText(n) { n = n || 0; return n < 0 ? `欠 ${-n}` : String(n); }
 
 // 發靈石：個人週上限、持有上限（回傳實際入帳數）
 export function grantStones(b, want, cfg, now = Date.now()) {

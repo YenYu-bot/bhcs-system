@@ -2,7 +2,7 @@
 // beast.html?t=<token>；token = beasts/{token} 的文件 id，規則只開 get、不開列舉。
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
-import { REALMS, STAGE_NAMES, BEAST_MAP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig, realmInfo, nextRealm, progress, trialPending, capWeekPts, capWeekStones, multiplier, rollWeek, stageOf, imgSrc, imgFallback, fmtTs, DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, forgeStars, FORGE_MAX } from "./beast-core.js";
+import { REALMS, STAGE_NAMES, BEAST_MAP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig, realmInfo, nextRealm, progress, trialPending, capWeekPts, capWeekStones, multiplier, rollWeek, stageOf, imgSrc, imgFallback, fmtTs, stoneText, DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, forgeStars, FORGE_MAX } from "./beast-core.js";
 
 const app = initializeApp({
   apiKey: "AIzaSyA4l5zcyEVzbLfpeCbDvDjQsw2Rfkfizao", authDomain: "bhcs-system.firebaseapp.com", projectId: "bhcs-system",
@@ -48,7 +48,7 @@ function render(b) {
     <div class="hint" style="text-align:center">${nxt ? `靈氣 ${b.pts} / ${nxt.pts}，再 ${Math.max(0, nxt.pts - b.pts)} 到「${nxt.name}」${nxt.trial ? '（需試煉）' : ''}` : `靈氣 ${b.pts}，已是大羅金仙`}</div>
     <div class="sv-stats">
       <div class="sv-stat"><b>${b.pts}</b><span>靈氣</span></div>
-      <div class="sv-stat"><b style="color:var(--stone)">💎 ${b.stones || 0}</b><span>靈石</span></div>
+      <div class="sv-stat"><b style="color:${(b.stones || 0) < 0 ? 'var(--red)' : 'var(--stone)'}">💎 ${stoneText(b.stones)}</b><span>${(b.stones || 0) < 0 ? '靈石（賺到先還）' : '靈石'}</span></div>
       <div class="sv-stat"><b>${wp}<small style="font-size:11px;color:var(--muted)">/${capWeekPts(b.courseCount, cfg)}</small></b><span>本週靈氣</span></div>
     </div>
     <div class="card"><div class="card-title">天賦與招式</div>
