@@ -148,7 +148,7 @@ async function loadClasses() {
 window.selectClass = function (id) {
   unsubs.forEach(u => u()); unsubs = [];
   cls = myClasses.find(c => c._id === id) || null;
-  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sw.lastKey = undefined; loadStSettings();
+  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sw.lastKey = undefined; loadStSettings(); for (const k in tmDone) delete tmDone[k]; if ($('stTimers')) $('stTimers').innerHTML = '';
   localStorage.setItem('beast.class', id || '');
   $('goalCard').style.display = cls ? '' : 'none';
   if (!cls) { $('beastGrid').innerHTML = '<div class="empty">請先選擇班級</div>'; $('classStats').innerHTML = ''; $('taskList').innerHTML = ''; return; }
@@ -939,6 +939,56 @@ window.closeWheel = async function () {
   wh.shownAt = 0;
   await writeSteward({ wheel: { ...((classState.steward || {}).wheel || {}), open: false } });
 };
+
+// ══════════════════════════════════════════════════════════════
+// 計時器（管家頁 3 個）：狀態存在 beastClass.timers，以絕對結束時間同步到投影與其他裝置
+//   timers[i] = { label, dur(秒), endAt(執行中), left(暫停時剩餘秒) }
+// ══════════════════════════════════════════════════════════════
+const TIMER_N = 3, tmDone = {};
+function timersState() { const t = classState.timers || []; return [0, 1, 2].map(i => ({ label: `計時器 ${i + 1}`, dur: 0, endAt: 0, left: 0, ...(t[i] || {}) })); }
+function tmLeft(t, now = Date.now()) { return t.endAt ? Math.max(0, Math.ceil((t.endAt - now) / 1000)) : (t.left || 0); }
+const mmss = sec => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+async function writeTimer(i, patch) {
+  if (!cls) return;
+  const all = timersState(); all[i] = { ...all[i], ...patch };
+  classState.timers = all; renderTimers();
+  await setDoc(doc(db, 'beastClass', cls._id), { timers: all, updatedAt: Date.now() }, { merge: true }).catch(e => showToast('計時器同步失敗：' + authErrMsg(e), 'error'));
+}
+window.tmSet = function (i, min) { delete tmDone[i]; writeTimer(i, { dur: min * 60, left: min * 60, endAt: Date.now() + min * 60000 }); };   // 點分鐘數直接開始
+window.tmToggle = function (i) {
+  const t = timersState()[i];
+  if (t.endAt) writeTimer(i, { left: tmLeft(t), endAt: 0 });                     // 暫停
+  else if ((t.left || 0) > 0) { delete tmDone[i]; writeTimer(i, { endAt: Date.now() + t.left * 1000 }); }   // 繼續
+};
+window.tmAdd = function (i, min) { const t = timersState()[i]; if (t.endAt) writeTimer(i, { endAt: t.endAt + min * 60000, dur: (t.dur || 0) + min * 60 }); else writeTimer(i, { left: Math.max(0, (t.left || 0) + min * 60), dur: Math.max(t.dur || 0, (t.left || 0) + min * 60) }); };
+window.tmReset = function (i) { delete tmDone[i]; writeTimer(i, { endAt: 0, left: 0, dur: 0 }); };
+window.tmLabel = function (i, v) { writeTimer(i, { label: (v || '').trim().slice(0, 10) || `計時器 ${i + 1}` }); };
+function renderTimers() {
+  const box = $('stTimers'); if (!box) return;
+  const all = timersState(), now = Date.now();
+  if (box.childElementCount !== TIMER_N) box.innerHTML = all.map((t, i) => `<div class="tm-card" id="tm${i}">
+      <input class="tm-label" value="${esc(t.label)}" maxlength="10" onchange="tmLabel(${i},this.value)" title="點一下改名稱">
+      <div class="tm-time">00:00</div><div class="tm-bar"><div></div></div>
+      <div class="tm-quick">${[5, 10, 15, 20].map(m => `<button onclick="tmSet(${i},${m})">${m} 分</button>`).join('')}</div>
+      <div class="tm-ctrl"><button onclick="tmAdd(${i},-1)" title="少 1 分鐘">-1</button><button class="tm-go" onclick="tmToggle(${i})">▶ 開始</button><button onclick="tmAdd(${i},1)" title="多 1 分鐘">+1</button><button onclick="tmReset(${i})">↺</button></div></div>`).join('');
+  all.forEach((t, i) => {
+    const el = $('tm' + i), left = tmLeft(t, now), running = !!t.endAt && left > 0, done = !!t.endAt && left === 0;
+    el.className = 'tm-card' + (done ? ' done' : running ? (left <= 60 ? ' run last' : ' run') : '');
+    el.querySelector('.tm-time').textContent = done ? '時間到！' : mmss(left);
+    el.querySelector('.tm-bar div').style.width = (t.dur ? Math.max(0, Math.min(100, left / t.dur * 100)) : 0) + '%';
+    const go = el.querySelector('.tm-go'); go.textContent = running ? '⏸ 暫停' : done ? '✓ 時間到' : left > 0 ? '▶ 繼續' : '▶ 開始'; go.disabled = !running && !left;
+    const lab = el.querySelector('.tm-label'); if (document.activeElement !== lab) lab.value = t.label;
+    if (done && tmDone[i] !== t.endAt) { tmDone[i] = t.endAt; timerDing(t.label); }
+  });
+  // 投影上的計時器
+  const pj = $('pjTimers');
+  if (pj) pj.innerHTML = all.map(t => { const left = tmLeft(t, now); if (!t.endAt && !left) return ''; const done = t.endAt && !left; return `<div class="pj-timer ${done ? 'done' : t.endAt && left <= 60 ? 'last' : ''}"><small>${esc(t.label)}</small>${done ? '時間到！' : mmss(left)}${!t.endAt ? ' ⏸' : ''}</div>`; }).join('');
+}
+function timerDing(label) {
+  try { const c = sw.ctx && sw.ctx.state === 'running' ? sw.ctx : new AudioContext(); [0, .35, .7].forEach(d => { const o = c.createOscillator(), g = c.createGain(); o.type = 'triangle'; o.frequency.value = 880; g.gain.setValueAtTime(.2, c.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, c.currentTime + d + .5); o.connect(g); g.connect(c.destination); o.start(c.currentTime + d); o.stop(c.currentTime + d + .5); }); } catch (e) { }
+  showToast(`⏰ ${label} 時間到！`); banner(`⏰ ${label}`, '時間到！', '#f5a66e');
+}
+setInterval(() => { if (cls) renderTimers(); }, 250);
 
 // ══════════════════════════════════════════════════════════════
 // 投影模式

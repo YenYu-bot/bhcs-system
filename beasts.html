@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611021244">
-<link rel="stylesheet" href="css/beasts.css?v=202611021244">
+<link rel="stylesheet" href="css/app.css?v=202611021314">
+<link rel="stylesheet" href="css/beasts.css?v=202611021314">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -117,6 +117,7 @@
         </div>
         <div class="st-flash" id="stFlash"></div>
       </div>
+      <div class="st-timers" id="stTimers"></div>
       <details class="card st-settings-card">
         <summary>⚙️ 管家設定</summary>
         <div class="hint" style="margin:8px 0 10px">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」，第三次轉懲罰轉盤；安靜一段時間會自動歸零。</div>
@@ -219,6 +220,7 @@
   <div class="pj-head">
     <div class="pj-title" id="pjTitle"></div>
     <div class="pj-goal" id="pjGoal"></div>
+    <div class="pj-timers" id="pjTimers"></div>
     <div class="pj-steward" id="pjSteward" style="display:none"></div>
     <button class="btn btn-ghost btn-sm" onclick="closeProjector()">✕ 離開</button>
   </div>
@@ -226,6 +228,6 @@
   <div class="pj-banner" id="pjBanner"></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611021244"></script>
+<script type="module" src="js/beasts.js?v=202611021314"></script>
 </body>
 </html>
