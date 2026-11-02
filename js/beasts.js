@@ -148,7 +148,7 @@ async function loadClasses() {
 window.selectClass = function (id) {
   unsubs.forEach(u => u()); unsubs = [];
   cls = myClasses.find(c => c._id === id) || null;
-  beasts = {}; prevBeasts = {}; classState = {}; tasks = [];
+  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sw.lastKey = undefined;
   localStorage.setItem('beast.class', id || '');
   $('goalCard').style.display = cls ? '' : 'none';
   if (!cls) { $('beastGrid').innerHTML = '<div class="empty">請先選擇班級</div>'; $('classStats').innerHTML = ''; $('taskList').innerHTML = ''; return; }
@@ -735,7 +735,7 @@ function stopSteward(silent) {
   clearInterval(sw.timer); sw.on = false;
   try { sw.stream.getTracks().forEach(t => t.stop()); sw.ctx.close(); } catch (e) { }
   $('stewardToggle').textContent = '🔔 開啟管家（先校準 10 秒）'; $('stewardPause').disabled = true; $('stewardPause').textContent = '⏸ 暫停';
-  $('stewardStatus').textContent = '已關閉'; $('meter').style.width = '0';
+  $('stewardStatus').textContent = '已關閉'; setMeter(0, 0); sw.live = null; stewardView();
   if (!silent) writeSteward({ on: false, strikes: 0 });
 }
 window.pauseSteward = function () { if (!sw.on) return; sw.paused = !sw.paused; $('stewardPause').textContent = sw.paused ? '▶ 繼續' : '⏸ 暫停'; $('stewardStatus').textContent = sw.paused ? '已暫停（老師講課中）' : '偵測中'; writeSteward({ paused: sw.paused }); };
@@ -749,12 +749,16 @@ function stewardTick() {
   if (sw.baseline === null) {
     sw.samples.push(db);
     if (sw.samples.length >= 100) { const a = [...sw.samples].sort((x, y) => x - y); sw.baseline = a[Math.floor(a.length / 2)]; $('stewardStatus').textContent = `偵測中（環境音 ${sw.baseline.toFixed(0)} dBFS，門檻 +${set.dbAbove}）`; }
-    $('meter').style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+    setMeter(Math.max(0, Math.min(100, (db + 60) / 60 * 100)), 0.3);
+    stewardView('calib');
     return;
   }
   const th = sw.baseline + set.dbAbove;
-  $('meter').style.width = Math.max(0, Math.min(100, (db - sw.baseline + 10) / (set.dbAbove + 20) * 100)) + '%';
-  $('meterTh').style.left = Math.max(0, Math.min(100, (set.dbAbove + 10) / (set.dbAbove + 20) * 100)) + '%';
+  const pct = Math.max(0, Math.min(100, (db - sw.baseline + 10) / (set.dbAbove + 20) * 100)), thPct = Math.max(0, Math.min(100, (set.dbAbove + 10) / (set.dbAbove + 20) * 100));
+  $('meterTh').style.left = thPct + '%';
+  setMeter(pct, pct / thPct);
+  sw.live = sw.paused ? 'paused' : db > th ? 'loud' : 'calm';
+  stewardView();
   const st = classState.steward || {};
   if (st.strikes > 0 && st.lastStrikeAt && now - st.lastStrikeAt > cfg.steward.resetMin * 60000 && !sw.resetting) { sw.resetting = true; writeSteward({ strikes: 0 }).finally(() => { sw.resetting = false; }); }
   if (sw.paused) return;
@@ -766,21 +770,57 @@ function stewardTick() {
 async function strike(set) {
   const st = classState.steward || {}; const n = (st.strikes || 0) + 1;
   beep(n === 1 ? 660 : 330, n === 1 ? 0.25 : 0.6);
-  if (n === 1) { await writeSteward({ strikes: 1, lastStrikeAt: Date.now() }); $('stewardStatus').textContent = '⚠️ 第一次警告'; return; }
+  if (n === 1) { await writeSteward({ strikes: 1, lastStrikeAt: Date.now() }); $('stewardStatus').textContent = '⚠️ 第一次警告'; return; }   // 畫面閃爍由 renderStewardRemote 偵測狀態變化觸發
   const patch = { strikes: 0, lastStrikeAt: Date.now(), scaredUntil: Date.now() + cfg.steward.scaredMin * 60000, scaredLevel: set.level };
   await writeSteward(patch);
   if (set.level === 'heavy') await setDoc(doc(db, 'beastClass', cls._id), { goal: { ...(classState.goal || {}), blockedWeek: weekKey() }, updatedAt: Date.now() }, { merge: true });
   $('stewardStatus').textContent = `😨 全班靈獸受驚（${{ light: '輕', mid: '中', heavy: '重' }[set.level]}）`;
-  banner('😨 全班靈獸受驚！', set.level === 'light' ? '' : '接下來 10 分鐘加分減半', '#ff6b6b');
 }
 function beep(freq, dur) { try { const c = sw.ctx || new AudioContext(); const o = c.createOscillator(), g = c.createGain(); o.frequency.value = freq; o.connect(g); g.connect(c.destination); g.gain.value = 0.15; o.start(); o.stop(c.currentTime + dur); } catch (e) { } }
 function renderStewardRemote() {
-  const st = classState.steward || {}; const fig = $('stewardFig');
-  fig.classList.toggle('warn', st.strikes === 1); fig.classList.toggle('angry', scaredVisual());
+  const st = classState.steward || {};
+  // 狀態改變 → 大字閃爍（每台裝置都會觸發，投影那台也看得到）
+  const key = `${st.strikes || 0}|${st.scaredUntil || 0}`;
+  if (sw.lastKey !== undefined && key !== sw.lastKey) {
+    if (scaredVisual() && (st.scaredUntil || 0) !== sw.lastScared) flash('angry', '😱 全班靈獸受驚了！', st.scaredLevel === 'light' ? '大家安靜一下，靈獸好害怕' : '接下來 10 分鐘加分減半');
+    else if (st.strikes === 1) flash('warn', '🤫 噓～第一次警告！', '再吵一次，靈獸就要受驚囉');
+  }
+  sw.lastKey = key; sw.lastScared = st.scaredUntil || 0;
+  stewardView();
   const pj = $('pjSteward');
   if (!st.on) { pj.style.display = 'none'; return; }
   pj.style.display = ''; pj.className = 'pj-steward ' + (scaredVisual() ? 'angry' : st.strikes ? 'warn' : '');
-  pj.innerHTML = `<img src="assets/beasts/steward-${scaredVisual() ? 3 : st.strikes ? 2 : 1}.png" onerror="this.onerror=null;this.src=this.src.replace('.png','.svg')"> 管家 ${scaredVisual() ? '😨 受驚中' : st.paused ? '⏸' : (st.strikes || 0) + '/2'}`;
+  pj.innerHTML = `<img src="assets/beasts/steward-${scaredVisual() ? 3 : st.strikes ? 2 : 1}.png" onerror="this.onerror=null;this.src=this.src.replace('.png','.svg')"> ${scaredVisual() ? '😱 靈獸受驚中' : st.paused ? '⏸ 老師講課中' : st.strikes ? '🤫 噓～已警告 1 次' : '😊 大家好安靜'}`;
+}
+// ── 管家畫面：依狀態換圖、對話、背景、鈴鐺 ──
+const BUBBLES = {
+  off: ['嗨～我是護山管家！<br>按下面的按鈕，我就幫大家顧著教室的音量。'],
+  calib: ['我先聽聽看教室平常有多安靜…<br>大家保持現在這樣就好 👂'],
+  calm: ['好安靜喔，大家好專心！🌿', '靈獸們都在乖乖修煉呢 ✨', '這樣的音量剛剛好 😊', '安靜的教室，靈氣最濃！'],
+  loud: ['咦？有點吵了喔… 👀', '小聲一點點～', '靈獸豎起耳朵了！'],
+  warn: ['噓～第一次警告！🤫<br>再吵一次，靈獸就要受驚囉！'],
+  angry: ['哎呀！全班靈獸都嚇壞了 😱<br>大家安靜下來，讓牠們冷靜一下…'],
+  paused: ['老師講課中，我先休息一下 ☕'],
+};
+function stewardView(force) {
+  const st = classState.steward || {};
+  const state = scaredVisual() ? 'angry' : st.strikes === 1 ? 'warn' : force || (sw.on ? (sw.baseline === null ? 'calib' : sw.live || 'calm') : st.on ? (st.paused ? 'paused' : 'calm') : 'off');
+  const stage = $('stStage'); if (!stage) return;
+  if (stage.dataset.state !== state) {
+    stage.className = 'st-stage ' + state; stage.dataset.state = state; sw.bubbleAt = 0;
+    $('stImg').src = `assets/beasts/steward-${state === 'angry' ? 3 : state === 'warn' || state === 'loud' ? 2 : 1}.png`;
+  }
+  const now = Date.now();
+  if (!sw.bubbleAt || now - sw.bubbleAt > 8000) { const list = BUBBLES[state]; $('stBubble').innerHTML = list[Math.floor(Math.random() * list.length)]; sw.bubbleAt = now; }
+  $('bell1').classList.toggle('lit', state === 'warn' || state === 'angry'); $('bell2').classList.toggle('lit', state === 'angry');
+}
+function setMeter(pct, ratio) {
+  $('meter').style.width = pct + '%'; $('stFace').style.left = pct + '%';
+  $('stFace').textContent = ratio >= 1 ? '😣' : ratio >= .8 ? '😯' : ratio >= .5 ? '🙂' : '😊';
+}
+function flash(kind, main, sub) {
+  const f = $('stFlash'); f.className = 'st-flash ' + kind; f.innerHTML = `${main}<small>${sub}</small>`; void f.offsetWidth; f.classList.add('show');
+  banner(main, sub, kind === 'angry' ? '#ff6b6b' : '#f6c343');
 }
 
 // ══════════════════════════════════════════════════════════════

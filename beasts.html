@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611020804">
-<link rel="stylesheet" href="css/beasts.css?v=202611020804">
+<link rel="stylesheet" href="css/app.css?v=202611020856">
+<link rel="stylesheet" href="css/beasts.css?v=202611020856">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -86,28 +86,38 @@
 
     <!-- 護山管家 -->
     <div id="tab-steward" style="display:none">
-      <div class="card">
-        <div class="steward-head">
-          <div class="steward-fig" id="stewardFig"><img src="assets/beasts/steward-1.png" onerror="this.onerror=null;this.src='assets/beasts/steward-1.svg'" alt="護山管家"></div>
-          <div style="flex:1">
-            <div class="card-title">護山管家 · 音量偵測</div>
-            <div class="hint">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」。老師講課時請按暫停。</div>
-          </div>
+      <div class="st-stage off" id="stStage">
+        <div class="st-deco" aria-hidden="true"><span>🍃</span><span>✨</span><span>🌸</span><span>🍃</span><span>✨</span><span>🌿</span></div>
+        <div class="st-main">
+          <div class="st-figure"><img id="stImg" src="assets/beasts/steward-1.png" onerror="this.onerror=null;this.src=this.src.replace('.png','.svg')" alt="護山管家"></div>
+          <div class="st-bubble" id="stBubble">嗨～我是護山管家！<br>按下面的按鈕，我就幫大家顧著教室的音量。</div>
+        </div>
+        <div class="st-meter">
+          <div class="st-meter-fill" id="meter"></div>
+          <div class="st-meter-th" id="meterTh"><span>太吵線</span></div>
+          <div class="st-face" id="stFace">😴</div>
+        </div>
+        <div class="st-row">
+          <div class="st-bells" title="超標次數：第 1 次警告、第 2 次靈獸受驚"><span id="bell1">🔔</span><span id="bell2">🔔</span></div>
+          <div class="steward-status" id="stewardStatus">尚未開啟</div>
         </div>
         <div class="steward-controls">
           <button class="btn btn-teal" id="stewardToggle" onclick="toggleSteward()">🔔 開啟管家（先校準 10 秒）</button>
-          <button class="btn btn-ghost" id="stewardPause" onclick="pauseSteward()" disabled>⏸ 暫停</button>
+          <button class="btn btn-ghost" id="stewardPause" onclick="pauseSteward()" disabled>⏸ 老師講課・暫停</button>
           <button class="btn btn-ghost" onclick="resetStrikes()">🔄 下課／歸零</button>
         </div>
-        <div class="meter-wrap"><div class="meter" id="meter"></div><div class="meter-th" id="meterTh"></div></div>
-        <div class="steward-status" id="stewardStatus">尚未開啟</div>
+        <div class="st-flash" id="stFlash"></div>
+      </div>
+      <details class="card st-settings-card">
+        <summary>⚙️ 管家設定</summary>
+        <div class="hint" style="margin:8px 0 10px">只計算音量數值，不錄音、不上傳。同一節課超標第一次警告，第二次全班靈獸「受驚」；安靜一段時間會自動歸零。</div>
         <div class="steward-settings">
           <label>門檻：環境音 +<input type="number" id="stDb" min="5" max="40" step="1"> dB</label>
           <label>持續<input type="number" id="stHold" min="0.5" max="5" step="0.5"> 秒才算</label>
           <label>冷卻<input type="number" id="stCool" min="1" max="30" step="1"> 秒</label>
           <label>懲罰<select id="stLevel"><option value="light">輕：只播動畫</option><option value="mid">中：10 分鐘加分減半</option><option value="heavy">重：減半＋取消本週全班目標</option></select></label>
         </div>
-      </div>
+      </details>
     </div>
 
     <!-- 設定（主管） -->
@@ -193,6 +203,6 @@
   <div class="pj-banner" id="pjBanner"></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611020804"></script>
+<script type="module" src="js/beasts.js?v=202611020856"></script>
 </body>
 </html>
