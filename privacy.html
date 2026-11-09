@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隱私權政策 · 百宏文教教室日誌與電訪表</title>
+<style>
+  body{margin:0;background:#0d1117;color:#e6edf3;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;line-height:1.8}
+  main{max-width:720px;margin:0 auto;padding:40px 20px}
+  h1{font-size:22px;margin:0 0 6px} .sub{color:rgba(230,237,243,.6);font-size:13px;margin-bottom:28px}
+  h2{font-size:16px;margin:28px 0 8px;color:#56ccb2} p,li{font-size:14px} a{color:#56ccb2}
+</style>
+</head>
+<body><main>
+<h1>隱私權政策</h1>
+<div class="sub">百宏文教機構 · 教室日誌與電訪表系統（bhcs-system）　最後更新：2026 年 11 月</div>
+
+<h2>適用範圍</h2>
+<p>本系統為百宏文教機構內部使用之管理工具，僅供本機構主管與授課老師登入使用，不對外開放註冊。</p>
+
+<h2>蒐集的資料</h2>
+<ul>
+  <li>老師帳號：帳號名稱、姓名、登入密碼（由 Firebase Authentication 以雜湊方式儲存，本系統不保存明文）。</li>
+  <li>教學紀錄：班級名單、學生姓名、出缺勤、作業與考試狀況、課堂進度。</li>
+  <li>家長聯繫：學生姓名、家長聯絡電話、電訪日期與溝通摘要。</li>
+</ul>
+
+<h2>使用目的</h2>
+<p>僅用於本機構的教學管理、學生學習狀況追蹤與家長聯繫，以及向主管推播每日填寫狀況提醒。不作行銷用途，不提供第三方。</p>
+
+<h2>儲存與保護</h2>
+<p>資料儲存於 Google Firebase（Cloud Firestore，asia-east1）。全程 HTTPS 加密傳輸；存取受 Firebase 安全規則限制——老師僅能讀取自己授課班級與配對學生的資料，主管可讀取全部。每日提醒由本機構自有的 Google Apps Script 以機構帳號身分讀取，不經第三方服務。</p>
+
+<h2>Google 帳號權限</h2>
+<p>每日提醒腳本以本機構 Google 帳號授權，使用的權限為：讀取 Cloud Firestore 資料、對外連線（LINE Messaging API）、以該帳號寄送失敗通知電子郵件。這些權限僅用於上述提醒功能。</p>
+
+<h2>資料保存與刪除</h2>
+<p>學生離班後，相關紀錄由主管停用或於學期結束封存；家長可透過本機構要求查詢、更正或刪除其聯絡資料。</p>
+
+<h2>聯絡方式</h2>
+<p>百宏文教機構　台中市北屯區　電話 04-22320448　<a href="https://www.bhcs.com.tw" target="_blank" rel="noopener">www.bhcs.com.tw</a></p>
+</main></body>
+</html>
