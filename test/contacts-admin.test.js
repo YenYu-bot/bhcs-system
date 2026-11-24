@@ -76,7 +76,11 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   eq(await page.locator('#ctRecCount').textContent(), '0 筆', 'resolved');
   await page.uncheck('#ctRecFlagOnly'); await page.click('#ct-sec-records button:has-text("全部")'); await page.waitForTimeout(300);
   includes(await page.locator('#ctRecLoadedHint').textContent(), '已載入全部');
-  eq(await page.locator('#ctRecCount').textContent(), '2 筆　10月份 1、2月份 1', 'all records grouped by period');
+  // 期別：每月 11 日起算（今天那筆屬於本期）；依實際日期算，不寫死月份
+  const periodYm = (y, m, d) => { let pm = d >= 11 ? m : m - 1, py = y; if (pm < 1) { pm = 12; py--; } return `${py}-${String(pm).padStart(2, '0')}`; };
+  const now = await page.evaluate(() => { const d = new Date(); return [d.getFullYear(), d.getMonth() + 1, d.getDate()]; });
+  const keys = [periodYm(...now), periodYm(2026, 3, 1)].sort().reverse();
+  eq(await page.locator('#ctRecCount').textContent(), `2 筆　${keys.map(k => `${Number(k.slice(5, 7))}月份 1`).join('、')}`, 'all records grouped by period');
 
   // 以新表為準 + 快照還原
   await goCt('📥 匯入名冊');
