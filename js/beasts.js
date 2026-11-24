@@ -15,7 +15,7 @@ import { REALMS, STAGE_NAMES, TRIAL_HINTS, BEASTS, BEAST_MAP, SHOP, SHOP_MAP, DE
   weekKey, dayKey, monthKey, multiplier, capWeekPts, capWeekStones, capHoldStones, realmFor, realmInfo, nextRealm, progress,
   trialPending, trialCooldownLeft, newBeast, normName, rollWeek, applyPts, penaltyPts, penaltyStones, grantStones,
   stageOf, imgSrc, imgFallback, imgScared, fmtTs, randomId,
-  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars, pickWeighted, stoneText, taipeiNow } from "./beast-core.js";
+  DECO, DECO_CATS, DECO_MAP, decoClasses, titleOf, FORGE_MAX, forgeCost, forgeStars, pickWeighted, stoneText, taipeiNow, weekStats } from "./beast-core.js";
 import { qrSvg } from "./vendor/qr.js";
 
 const firebaseConfig = {
@@ -53,7 +53,16 @@ let sel = new Set();          // 課堂櫥窗：已點選的靈獸 id
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let _toastT = null;
-function showToast(msg, type = 'success') { const t = $('toast'); t.textContent = msg; t.className = `toast show ${type}`; clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove('show'), 2600); }
+function showToast(msg, type = 'success', undo = null) {
+  const t = $('toast'); t.textContent = msg; t.className = `toast show ${type}`;
+  if (undo) { const bt = document.createElement('button'); bt.className = 'toast-undo'; bt.textContent = '↶ 復原'; bt.onclick = async () => { t.classList.remove('show'); await undo(); }; t.appendChild(bt); }
+  clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove('show'), undo ? 5000 : 2600);
+}
+// 加扣分後 5 秒內可一鍵復原（pairs: [[beastId, logId], ...]）
+function undoToast(pairs) {
+  pairs = pairs.filter(p => p[1]); if (!pairs.length) return null;
+  return async () => { let n = 0; for (const [b, l] of pairs) { try { if (await undoLog(b, l, true)) n++; } catch (e) { console.error(e); } } showToast(n ? `已復原 ${n} 筆` : '復原失敗', n ? 'success' : 'error'); };
+}
 function showLoading(msg = '處理中...') { $('loadingText').textContent = msg; $('loadingOverlay').classList.add('show'); }
 function hideLoading() { $('loadingOverlay').classList.remove('show'); }
 function authErrMsg(e) {
@@ -149,9 +158,9 @@ async function loadClasses() {
 window.selectClass = function (id) {
   unsubs.forEach(u => u()); unsubs = [];
   cls = myClasses.find(c => c._id === id) || null;
-  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sel = new Set(); gridCache = []; drawPool = null; sw.lastKey = undefined; loadStSettings(); for (const k in tmDone) delete tmDone[k]; if ($('stTimers')) $('stTimers').innerHTML = '';
+  beasts = {}; prevBeasts = {}; classState = {}; tasks = []; sel = new Set(); gridCache = []; pjCache = []; drawPool = null; seatEdit = false; seatsDraft = null; seatPick = null; fmSeen = undefined; sw.lastKey = undefined; loadStSettings(); for (const k in tmDone) delete tmDone[k]; if ($('stTimers')) $('stTimers').innerHTML = '';
   localStorage.setItem('beast.class', id || '');
-  $('goalCard').style.display = cls ? '' : 'none';
+  $('goalCard').style.display = 'none';
   $('gridTools').style.display = cls ? '' : 'none'; renderActBar();
   if (!cls) { $('beastGrid').innerHTML = '<div class="empty">請先選擇班級</div>'; $('classStats').innerHTML = ''; $('taskList').innerHTML = ''; return; }
   // 靈獸（依姓名 in 查詢，每 30 人一組）
@@ -178,44 +187,82 @@ function renderClassBar() {
   if (!cls) return;
   const used = csWeek(), budget = classBudget();
   const g = classState.goal || {}; const wk = weekKey();
-  const chips = [`<span class="chip">本週靈石額度 ${used}/${budget}${used >= budget ? '（已用完）' : ''}</span>`];
+  const gtext = g.weekKey === wk ? (g.text || '') : '';
+  const chips = [`<span class="chip click" onclick="toggleGoal()">🎯 ${gtext ? esc(gtext) + (g.doneWeek === wk ? ' ✅' : '') : '設定本週目標'}</span>`];
+  const fm = formationState();
+  chips.push(`<span class="chip click ${fm.fired ? 'good' : ''}" onclick="openFormation()">🛡 護山大陣 ${fm.pts}/${fm.goal}${fm.fired ? ' 已啟動' : ''}</span>`);
+  chips.push(`<span class="chip">本週靈石額度 ${used}/${budget}${used >= budget ? '（已用完）' : ''}</span>`);
   if (scaredVisual()) chips.push(`<span class="chip bad">😨 受驚中${scaredNow() ? '，加分減半' : ''}至 ${fmtTs(classState.steward.scaredUntil).slice(-5)}</span>`);
   if ((classState.steward || {}).on) chips.push(`<span class="chip warn">🔔 管家 ${classState.steward.strikes || 0}/2</span>`);
   $('classStats').innerHTML = chips.join('') + countdownChips(3);
-  if (document.activeElement !== $('goalText')) $('goalText').value = g.weekKey === wk ? (g.text || '') : '';
+  if (document.activeElement !== $('goalText')) $('goalText').value = gtext;
   const blocked = g.blockedWeek === wk, done = g.doneWeek === wk;
   $('goalBtn').disabled = blocked || done || !(g.weekKey === wk && g.text);
   $('goalNote').textContent = blocked ? '本週全班目標已因管家懲罰取消' : done ? '本週已達成並加分 ✅' : '老師自訂目標；達成由老師按鈕核定，每人加分不計入每週上限。';
+  checkFormationFire();
   if (projectorOn) renderProjector();
 }
+window.toggleGoal = function () { const c = $('goalCard'); c.style.display = c.style.display === 'none' ? '' : 'none'; if (c.style.display === '') $('goalText').focus(); fitGrid(); };
 
 // ══════════════════════════════════════════════════════════════
-// 課堂：靈獸格
+// 課堂：靈獸格（格子／名單／座位）
 // ══════════════════════════════════════════════════════════════
+function groupOf(nk) { return ((classState.groups || {})[nk]) || 0; }
+function favReasons() {
+  let fav = null; try { fav = JSON.parse(localStorage.getItem('beast.fav.' + (me?.id || '')) || 'null'); } catch (e) { }
+  const list = (fav || []).map(l => cfg.reasons.find(x => x.label === l)).filter(Boolean);
+  return list.length ? list : cfg.reasons.slice(0, 4);
+}
 function cardHtml(b, name, pj = false) {
-  if (!b) return `<div class="beast-card unassigned" data-name="${esc(name)}" onclick="openPick(this.dataset.name)"><div class="beast-art egg">🥚</div><div class="beast-name">${esc(name)}</div><div class="beast-pet">尚未選獸，點我選擇</div></div>`;
+  const g = groupOf(normName(name)), gdot = g ? `<span class="grp g${g}">${g}</span>` : '';
+  if (!b) return `<div class="${pj ? 'pj-card' : 'beast-card'} unassigned" data-name="${esc(name)}" onclick="eggTap(this.dataset.name)">${gdot}<div class="beast-art egg">🥚</div><div class="beast-name">${esc(name)}</div><div class="beast-pet">${pj ? '' : '尚未選獸，點我選擇'}</div></div>`;
   const info = BEAST_MAP[b.beast] || BEASTS[0], r = realmInfo(b.realm), nxt = nextRealm(b.realm);
   const pend = trialPending(b);
   const scared = scaredVisual() && !(b.items || {}).dingxin;
   const title = titleOf(b), stars = forgeStars(b.forge);
-  return `<div class="${pj ? 'pj-card' : 'beast-card'} ${!pj && sel.has(b._id) ? 'sel' : ''} stage-${r.stage} ${scared ? 'scared' : ''} ${decoClasses(b)}" style="--c:${info.color}" data-id="${b._id}" ${pj ? '' : `onclick="cardTap('${b._id}')"`}>
-    ${pj ? '' : '<span class="sel-mark">✓</span>'}${stars ? `<span class="forge-stars">${stars}</span>` : ''}${b.julingActive ? '<span class="mark2">聚靈</span>' : ''}
-    ${img(b, '', scared)}
+  const fav = favReasons()[0];
+  const pick = seatEdit && seatPick === normName(name) ? 'seat-pick' : '';
+  return `<div class="${pj ? 'pj-card' : 'beast-card'} ${sel.has(b._id) ? 'sel' : ''} ${pick} stage-${r.stage} ${scared ? 'scared' : ''} ${decoClasses(b)}" style="--c:${info.color}" data-id="${b._id}" onclick="cardTap('${b._id}')">
+    <span class="sel-mark">✓</span>${gdot}${stars && !pj ? `<span class="forge-stars">${stars}</span>` : ''}${b.julingActive && !pj ? '<span class="mark2">聚靈</span>' : ''}
+    ${img(b, '', scared)}${pj ? `<div class="beast-realm pj-realm ${pend ? 'trial' : ''}">${pend ? '⚡' : ''}${r.name}</div>` : ''}
     <div class="beast-name">${esc(b.name)}</div>
-    <div class="beast-pet">${esc(b.petName || info.name)}</div>${title ? `<div class="beast-title">${esc(title)}</div>` : ''}
-    <div class="beast-realm ${pend ? 'trial' : ''}">${r.name}${pend ? ' · 待試煉' : ''}</div>
+    ${pj ? '' : `<div class="beast-pet">${esc(b.petName || info.name)}</div>${title ? `<div class="beast-title">${esc(title)}</div>` : ''}
+    <div class="beast-realm ${pend ? 'trial' : ''}">${pend ? '⚡ ' : ''}${r.name}</div>`}
     <div class="progress"><div class="progress-bar" style="width:${Math.round(progress(b.pts, b.realm) * 100)}%"></div></div>
-    <div class="beast-foot"><span>${b.pts}${nxt ? '/' + nxt.pts : ''} 靈氣</span><span class="stone ${(b.stones || 0) < 0 ? 'debt' : ''}">💎 ${stoneText(b.stones)}</span></div>
+    ${pj ? '' : `<div class="beast-foot"><span>${b.pts}${nxt ? '/' + nxt.pts : ''} 靈氣</span><span class="stone ${(b.stones || 0) < 0 ? 'debt' : ''}">💎 ${stoneText(b.stones)}</span></div>
+    ${fav ? `<button class="quick-plus" onclick="event.stopPropagation();quickAward('${b._id}')" title="${esc(fav.label)}">+${fav.pts}</button>` : ''}`}
   </div>`;
+}
+// 畫面上的排列：有座位表就照座位（空位留白），否則照名單
+function useSeats() { const st = classState.seats; return !!(st && st.cols && st.order && st.order.length) && viewMode() !== 'list'; }
+function layout() {
+  const names = cls.students || [];
+  if (!useSeats() && !seatEdit) return names.map(n => ({ name: n }));
+  const st = seatsDraft || classState.seats || {}, byKey = Object.fromEntries(names.map(n => [normName(n), n]));
+  const cols = st.cols || 6, rows = st.rows || Math.ceil(names.length / cols);
+  const order = (st.order || []).slice(0, cols * rows); while (order.length < cols * rows) order.push(null);
+  const placed = new Set(order.filter(k => k && byKey[k]));
+  const missing = names.filter(n => !placed.has(normName(n)));
+  const out = order.map((k, i) => k && byKey[k] ? { name: byKey[k], seat: i } : (missing.length && !seatEdit ? null : { empty: true, seat: i }));
+  // 名單裡有、座位表沒排到的人：塞進空位，還不夠就排在最後
+  for (let i = 0; i < out.length && missing.length; i++) if (!out[i] || out[i].empty) out[i] = { name: missing.shift(), seat: i };
+  for (const n of missing) out.push({ name: n, seat: out.length });
+  return out.map((x, i) => x || { empty: true, seat: i });
+}
+function slotHtml(x, pj) {
+  if (x.empty) return `<div class="seat-empty ${seatEdit ? 'edit' : ''} ${seatEdit && seatPick === '#' + x.seat ? 'seat-pick' : ''}" ${seatEdit ? `onclick="seatTap('#${x.seat}')"` : ''}></div>`;
+  return cardHtml(beasts[normName(x.name)], x.name, pj);
 }
 function renderGrid() {
   if (!cls) return;
-  const names = cls.students || [];
-  patchGrid($('beastGrid'), names.map(n => cardHtml(beasts[normName(n)], n)), gridCache, '<div class="empty">這個班還沒有學生</div>');
+  const g = $('beastGrid'), lay = layout(), list = viewMode() === 'list';
+  g.classList.toggle('list', list); g.classList.toggle('seated', !list && (useSeats() || seatEdit));
+  patchGrid(g, lay.map(x => slotHtml(x, false)), gridCache, '<div class="empty">這個班還沒有學生</div>');
   fitGrid();
   animateDiff('#beastGrid');
   if (projectorOn) renderProjector();
   prevBeasts = Object.fromEntries(Object.entries(beasts).map(([k, v]) => [k, { pts: v.pts, realm: v.realm, stones: v.stones }]));
+  renderGroupBtns(); renderSeatBar();
 }
 // 只換掉有變的卡片（其他卡片的動畫不會被打斷）
 let gridCache = [], pjCache = [];
@@ -227,27 +274,32 @@ function patchGrid(el, htmls, cache, emptyHtml) {
   htmls.forEach((h, i) => { if (cache[i] !== h) { const t = document.createElement('template'); t.innerHTML = h.trim(); el.children[i].replaceWith(t.content.firstChild); cache[i] = h; } });
 }
 // 偵測靈氣／靈石／境界變化 → 加分跳躍、扣分受驚、浮動數字、進化動畫、投影特寫
+// 上課畫面（投影）只演好事：扣分、扣靈石、欠債都不在全班面前演
 function animateDiff(scope) {
-  const evs = [];
+  const evs = [], pj = scope === '#pjGrid';
+  let sUp = 0, sEvo = 0;
   for (const [k, b] of Object.entries(beasts)) {
     const p = prevBeasts[k]; if (!p) continue;
     const dp = b.pts - p.pts, ds = (b.stones || 0) - (p.stones || 0);
     if (!dp && !ds && b.realm === p.realm) continue;
     const reason = b.fx && Date.now() - b.fx.at < 8000 ? b.fx.r : '';
-    evs.push({ b, dp, ds, reason });
+    if (dp > 0 || (ds > 0 && dp >= 0)) evs.push({ b, dp: Math.max(0, dp), ds: Math.max(0, ds), reason });
     const el = document.querySelector(`${scope} [data-id="${b._id}"]`); if (!el) continue;
     const kind = dp < 0 || (ds < 0 && !dp) ? 'down' : dp > 0 ? 'up' : ds > 0 ? 'stone' : '';
-    if (kind) cardFx(el, kind, b);
-    if (dp) float(el, (dp > 0 ? '+' : '') + dp, dp < 0 ? 'neg' : '', reason);
-    if (ds) setTimeout(() => float(el, (ds > 0 ? '+' : '') + ds + ' 💎', 'stone', dp ? '' : reason), dp ? 350 : 0);
+    if (kind && !(pj && kind === 'down')) cardFx(el, kind, b);
+    if (dp > 0 || (dp < 0 && !pj)) float(el, (dp > 0 ? '+' : '') + dp, dp < 0 ? 'neg' : '', reason);
+    if (ds > 0 || (ds < 0 && !pj)) setTimeout(() => float(el, (ds > 0 ? '+' : '') + ds + ' 💎', 'stone', dp ? '' : reason), dp ? 350 : 0);
+    if (dp > 0) sUp++;
     if (b.realm > p.realm) {
+      sEvo++;
       el.classList.add('evolve'); setTimeout(() => el.classList.remove('evolve'), 1700);
       const info = BEAST_MAP[b.beast], r = realmInfo(b.realm);
       const skillIdx = [2, 4, 7, 10].indexOf(b.realm);
       banner(`${esc(b.name)} 突破 · ${r.name}`, skillIdx >= 0 ? `習得「${info.skills[skillIdx]}」` : (b.realm === 12 ? `本命神通「${info.ultimate}」` : r.unlock), info.color);
     }
   }
-  if (scope === '#pjGrid' && evs.length) queueSpot(evs);
+  if (!pj) { if (sEvo) sfx('evolve'); else if (sUp) sfx('up'); }
+  if (pj && evs.length) queueSpot(evs);
 }
 // 卡片特效：up＝開心跳＋光圈＋星星；down＝換受驚圖＋搖晃＋紅框＋汗滴；stone＝藍光＋寶石
 function cardFx(el, kind, b) {
@@ -369,14 +421,22 @@ async function tx(beastId, fn, { touchClass = false } = {}) {
     const realmLog = [];
     if (newRealm !== b.realm) { patch.realm = newRealm; if (newRealm === 12) patch.hall = true; if (newRealm > b.realm) realmLog.push(logBase({ type: 'realm', reason: `突破 → ${realmInfo(newRealm).name}` })); }
     t.update(bref, patch);
-    if (r.log) t.set(doc(collection(bref, 'log')), logBase(r.log));
+    let logId = null;
+    if (r.log) { const lr = doc(collection(bref, 'log')); t.set(lr, logBase(r.log)); logId = lr.id; }
     for (const l of realmLog) t.set(doc(collection(bref, 'log')), l);
     if (r.logRef) t.update(r.logRef, r.logPatch);
     if (cref && (r.csPatch || r.stat)) {
       const cp = { ...(r.csPatch || {}), ...(r.stat ? statPatch(cs, r.stat[0], r.stat[1]) : {}), updatedAt: Date.now() };
+      // 護山大陣：全班本週加的靈氣累積成共同進度，集滿就啟動
+      const fd = touchClass && r.log && r.log.delta > 0 && (r.log.type === 'pts' || r.log.type === 'goal') ? r.log.delta : 0;
+      if (fd) {
+        const wk = weekKey(), f = cs.formation || {}, cur = f.weekKey === wk ? (f.pts || 0) : 0, goal = formationGoal(cs);
+        cp.formation = { weekKey: wk, pts: cur + fd, firedAt: f.weekKey === wk ? (f.firedAt || 0) : 0 };
+        if (goal && cur < goal && cur + fd >= goal) cp.formation.firedAt = Date.now();
+      }
       t.set(cref, cp, { merge: true });
     }
-    return { patch, realmUp: newRealm > b.realm ? newRealm : 0, extra: r.extra };
+    return { patch, realmUp: newRealm > b.realm ? newRealm : 0, extra: r.extra, logId };
   });
 }
 
@@ -394,9 +454,10 @@ window.award = async function (beastId, pts, reason, quiet = false) {
       const note = [a.halved ? '受驚減半' : '', a.doubled ? '聚靈丹 ×2' : '', a.usedDingxin ? '定心符抵擋' : '', a.capped ? '達本週上限' : ''].filter(Boolean).join('、');
       return { patch, log: { type: 'pts', delta: a.delta, reason: reason + (note ? `（${note}）` : '') }, stat: ['ptsIssued', a.delta], extra: a };
     }, { touchClass: true });
-    const a = res.extra;
+    const a = { ...res.extra, logId: res.logId };
     if (quiet) return a;
-    showToast(a.delta > 0 ? `+${a.delta} 靈氣${a.capped ? '（達本週上限）' : a.doubled ? '（聚靈丹 ×2）' : a.halved ? '（受驚減半）' : ''}` : '已達本週上限，未加分', a.delta > 0 ? 'success' : 'error');
+    showToast(a.delta > 0 ? `+${a.delta} 靈氣${a.capped ? '（達本週上限）' : a.doubled ? '（聚靈丹 ×2）' : a.halved ? '（受驚減半）' : ''}` : '已達本週上限，未加分', a.delta > 0 ? 'success' : 'error', a.delta > 0 ? undoToast([[beastId, res.logId]]) : null);
+    return a;
   } catch (e) { console.error(e); if (quiet) throw e; showToast('加分失敗：' + authErrMsg(e), 'error'); }
 };
 // ── 懲罰（扣靈氣 / 扣靈石）──
@@ -409,7 +470,7 @@ window.penalize = async function (beastId, kind, n, reason, quiet = false) {
       return { patch: { stones: (b.stones || 0) - d }, log: { type: 'penalty', stones: -d, reason }, stat: ['penaltyStones', d] };
     }, { touchClass: true });
     if (quiet) return r;
-    if (r.aborted) showToast(r.aborted, 'error'); else showToast('已記錄懲罰');
+    if (r.aborted) showToast(r.aborted, 'error'); else showToast('已記錄懲罰', 'success', undoToast([[beastId, r.logId]]));
   } catch (e) { console.error(e); if (quiet) throw e; showToast('失敗：' + authErrMsg(e), 'error'); }
 };
 // ── 試煉 ──
@@ -534,7 +595,7 @@ async function swapBeast(beastId, key, mode) {
   if (r.aborted) showToast(r.aborted, 'error'); else showToast('已換獸');
 }
 // ── 撤銷（當天、自己或主管）──
-window.undoLog = async function (beastId, logId) {
+window.undoLog = async function (beastId, logId, quiet = false) {
   try {
     const bref = doc(db, 'beasts', beastId), lref = doc(db, 'beasts', beastId, 'log', logId);
     const cref = cls ? doc(db, 'beastClass', cls._id) : null;
@@ -559,12 +620,15 @@ window.undoLog = async function (beastId, logId) {
         if (l.stones > 0 && sameWeek) { const iss = cs.issued || {}; cp.issued = { weekKey: weekKey(), total: Math.max(0, (iss.weekKey === weekKey() ? iss.total || 0 : 0) - l.stones) }; }
         const f = l.type === 'pts' || l.type === 'goal' ? ['ptsIssued', -l.delta] : l.type === 'stones' ? ['stonesIssued', -l.stones] : l.delta ? ['penaltyPts', l.delta] : ['penaltyStones', l.stones];
         Object.assign(cp, statPatch(cs, f[0], f[1]));
+        const fm = cs.formation || {};
+        if (sameWeek && l.delta > 0 && (l.type === 'pts' || l.type === 'goal') && fm.weekKey === weekKey()) cp.formation = { ...fm, pts: Math.max(0, (fm.pts || 0) - l.delta) };
         t.set(cref, cp, { merge: true });
       }
       return true;
     });
+    if (quiet) return out;
     if (out) showToast('已撤銷');
-  } catch (e) { console.error(e); showToast(e.message || '撤銷失敗', 'error'); }
+  } catch (e) { console.error(e); if (quiet) throw e; showToast(e.message || '撤銷失敗', 'error'); }
 };
 // ── 全班目標 ──
 window.saveGoal = async function () {
@@ -647,7 +711,8 @@ function renderStudent(full = true) {
       const d = l.delta ? `<span class="lg-d ${l.delta > 0 ? 'pos' : 'neg'}">${l.delta > 0 ? '+' : ''}${l.delta}</span>` : l.stones ? `<span class="lg-d stone">${l.stones > 0 ? '+' : ''}${l.stones}💎</span>` : '<span class="lg-d">·</span>';
       return `<div class="log-row ${l.undone ? 'undone' : ''}">${d}<span class="lg-r">${esc(l.reason)}<br><span class="lg-t">${esc(l.byName || '')}${l.className ? ' · ' + esc(l.className) : ''}</span></span><span class="lg-t">${fmtTs(l.ts)}</span>${canUndo ? `<button class="btn btn-ghost btn-sm" onclick="undoLog('${id}','${l._id}')">撤銷</button>` : ''}</div>`;
     }).join('') || '<div class="empty">還沒有紀錄</div>'}</div>
-      ${me.isAdmin ? `<div class="trial-box" style="margin-top:14px;border-color:rgba(255,107,107,.4)"><div class="tb-title" style="color:var(--red)">🗑 刪除這隻靈獸（主管）</div><div class="hint" style="margin:0 0 8px">用於測試後還原：刪掉靈獸、所有紀錄，並扣回班級本週靈石額度、月報表與任務已發放標記。學生會回到「尚未選獸」，舊 QR 連結失效。</div><button class="btn btn-primary btn-sm" onclick="resetBeast('${id}')">刪除並還原</button></div>` : ''}`;
+      ${me.isAdmin ? `<div class="trial-box" style="margin-top:14px;border-color:rgba(255,107,107,.4)"><div class="tb-title" style="color:var(--red)">🗑 刪除這隻靈獸（主管）</div><div class="hint" style="margin:0 0 8px">用於測試後還原：刪掉靈獸、所有紀錄，並扣回班級本週靈石額度、月報表與任務已發放標記。學生會回到「尚未選獸」，舊 QR 連結失效。</div><button class="btn btn-primary btn-sm" onclick="resetBeast('${id}')">刪除並還原</button></div>
+      <div class="trial-box" style="margin-top:10px"><div class="tb-title">🔗 改綁姓名（主管）</div><div class="hint" style="margin:0 0 8px">班表上的名字打錯或學生改名時用：靈獸、境界、靈石、紀錄全部保留，只換綁定的姓名。</div><button class="btn btn-ghost btn-sm" onclick="relinkBeast('${id}')">改綁到其他姓名</button></div>` : ''}`;
   } else if (stTab === 'qr') {
     const link = beastLink(id);
     $('st-qr').innerHTML = `<div class="qr-box">${qrSvg(link, 220)}<div class="qr-link">${esc(link)}</div><div class="hint">貼在聯絡簿；掃描只能看靈獸、靈石與紀錄，不能操作。</div><button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${link}').then(()=>showToast('已複製連結'))">複製連結</button></div>`;
@@ -1112,16 +1177,36 @@ setInterval(() => { if (cls) renderTimers(); }, 250);
 // ══════════════════════════════════════════════════════════════
 // 投影模式
 // ══════════════════════════════════════════════════════════════
-window.openProjector = function () { if (!cls) { showToast('請先選班級', 'error'); return; } projectorOn = true; pjCache.length = 0; $('projector').style.display = ''; pjWake(); renderProjector(); setTimeout(renderProjector, 300); document.documentElement.requestFullscreen?.().catch(() => { }); };
-window.closeProjector = function () { projectorOn = false; $('projector').style.display = 'none'; document.exitFullscreen?.().catch(() => { }); };
+// 上課畫面：中間全班靈獸（可直接點選加分），右邊側欄放管家、計時器、本週之星
+window.openProjector = function () {
+  if (!cls) { showToast('請先選班級', 'error'); return; }
+  projectorOn = true; pjCache.length = 0; document.body.classList.add('pj-on');
+  try { $('projector').classList.toggle('no-rail', localStorage.getItem('beast.rail') === '0'); } catch (e) { }
+  $('railTimers').appendChild($('stTimers'));   // 計時器整組搬到側欄（關掉再搬回管家頁）
+  $('projector').style.display = ''; pjWake(); renderProjector(); setTimeout(renderProjector, 300);
+  document.documentElement.requestFullscreen?.().catch(() => { });
+  checkAnniversary();
+};
+window.closeProjector = function () {
+  projectorOn = false; document.body.classList.remove('pj-on'); selClear();
+  $('stTimersHome').appendChild($('stTimers'));
+  $('projector').style.display = 'none'; document.exitFullscreen?.().catch(() => { });
+};
+window.toggleRail = function () { $('projector').classList.toggle('no-rail'); try { localStorage.setItem('beast.rail', $('projector').classList.contains('no-rail') ? '0' : '1'); } catch (e) { } renderProjector(); };
 function renderProjector() {
   if (!projectorOn || !cls) return;
   $('pjTitle').textContent = cls.name;
-  const g = classState.goal || {}; $('pjGoal').textContent = g.weekKey === weekKey() && g.text ? `🎯 本週目標：${g.text}${g.doneWeek === weekKey() ? ' ✅' : ''}` : '';
-  patchGrid($('pjGrid'), (cls.students || []).map(nm => { const b = beasts[normName(nm)]; return b ? cardHtml(b, nm, true) : `<div class="pj-card"><div class="beast-art egg">🥚</div><div class="beast-name">${esc(nm)}</div></div>`; }), pjCache, '');
-  fitInto($('pjGrid'), (cls.students || []).length, $('pjGrid').clientWidth, $('pjGrid').clientHeight, true);
-  $('pjCount').innerHTML = countdownChips(3);
-  renderStewardRemote();
+  const g = classState.goal || {}; $('pjGoal').textContent = g.weekKey === weekKey() && g.text ? `🎯 ${g.text}${g.doneWeek === weekKey() ? ' ✅' : ''}` : '';
+  const fm = formationState();
+  $('pjFormation').innerHTML = `<span>🛡 護山大陣</span><div class="fm-bar"><div style="width:${Math.min(100, fm.pts / Math.max(1, fm.goal) * 100)}%"></div></div><b>${fm.fired ? '啟動！' : `${fm.pts}/${fm.goal}`}</b>`;
+  $('pjFormation').classList.toggle('fired', fm.fired);
+  const lay = layout(), seated = useSeats();
+  const pg = $('pjGrid'); pg.classList.toggle('seated', seated);
+  $('pjFront').style.display = seated ? '' : 'none';
+  patchGrid(pg, lay.map(x => slotHtml(x, true)), pjCache, '');
+  fitInto(pg, lay.length, pg.clientWidth, pg.clientHeight, true, seated ? (classState.seats.cols || 6) : 0);
+  $('pjCount').innerHTML = countdownChips(2);
+  renderStewardRemote(); renderRail();
   animateDiff('#pjGrid');
 }
 
@@ -1188,44 +1273,62 @@ async function loadHall() {
 // ══════════════════════════════════════════════════════════════
 // 課堂櫥窗：點選靈獸（可多選）→ 底部動作列加分／扣分
 // ══════════════════════════════════════════════════════════════
-window.cardTap = function (id) { if (sel.has(id)) sel.delete(id); else sel.add(id); renderGrid(); renderActBar(); };
+window.cardTap = function (id) {
+  if (seatEdit) { const b = Object.values(beasts).find(x => x._id === id); if (b) seatTap(b.nameKey); return; }
+  if (sel.has(id)) sel.delete(id); else sel.add(id); renderGrid(); renderActBar();
+};
+window.eggTap = function (name) { if (seatEdit) { seatTap(normName(name)); return; } if (projectorOn) { showToast('請在課堂頁幫這位學生選靈獸', 'error'); return; } openPick(name); };
 window.selAll = function () { const all = Object.values(beasts).filter(b => (cls?.students || []).some(n => normName(n) === b.nameKey)).map(b => b._id); sel = sel.size === all.length ? new Set() : new Set(all); renderGrid(); renderActBar(); };
 window.selClear = function () { if (!sel.size) return; sel = new Set(); if (cls) renderGrid(); renderActBar(); };
 window.selDetail = function () { const id = [...sel][0]; selClear(); openStudent(id); };
 const selBeasts = () => Object.values(beasts).filter(b => sel.has(b._id));
+let actMore = false;
 function renderActBar() {
   const bar = $('actBar'); if (!bar) return;
   const list = selBeasts();
-  if (!list.length || !cls) { bar.classList.remove('show'); return; }
+  if (!list.length || !cls) { bar.classList.remove('show'); actMore = false; return; }
   const who = list.length === 1 ? esc(list[0].name) : `${list.length} 人`;
   const keepPen = $('actPenReason')?.value, keepKind = $('actPenKind')?.value;
+  const favs = favReasons().map(x => x.label);
+  const btn = (x) => `<button class="act-btn up" onclick="actAward(${cfg.reasons.indexOf(x)})"><span>${esc(x.label)}</span><b>+${x.pts}</b></button>`;
   bar.innerHTML = `<div class="act-row"><span class="act-who">✓ ${who}</span>
-      ${cfg.reasons.map((x, i) => `<button class="act-btn up" onclick="actAward(${i})"><span>${esc(x.label)}</span><b>+${x.pts}</b></button>`).join('')}
+      ${favReasons().map(btn).join('')}
+      <button class="btn btn-ghost btn-sm" onclick="toggleActMore()">${actMore ? '收起 ▴' : '更多 ▾'}</button>
       <span style="flex:1"></span>${list.length === 1 ? '<button class="btn btn-ghost btn-sm" onclick="selDetail()">📋 詳細／商店</button>' : ''}<button class="btn btn-ghost btn-sm" onclick="selClear()">取消</button></div>
+    ${actMore ? `<div class="act-row act-more">${cfg.reasons.map((x, i) => `<span class="act-fav"><button class="act-btn up" onclick="actAward(${i})"><span>${esc(x.label)}</span><b>+${x.pts}</b></button><button class="star ${favs.includes(x.label) ? 'on' : ''}" onclick="toggleFav(${i})" title="設為常用（最多 4 個）">${favs.includes(x.label) ? '★' : '☆'}</button></span>`).join('')}</div>` : ''}
     <div class="act-row"><select class="select-input" id="actPenKind"><option value="pts">扣靈氣</option><option value="stones">扣靈石</option></select>
       <select class="select-input" id="actPenReason">${cfg.penaltyReasons.map(x => `<option>${esc(x)}</option>`).join('')}</select>
-      ${[1, 2, 3].map(n => `<button class="act-btn neg" onclick="actPenalty(${n})"><span>扣</span><b>−${n}</b></button>`).join('')}</div>`;
+      ${[1, 2, 3].map(n => `<button class="act-btn neg" onclick="actPenalty(${n})"><span>扣</span><b>−${n}</b></button>`).join('')}
+      <span class="act-note">扣分只會顯示在老師這邊，不會在上課畫面上演出</span></div>`;
   if (keepPen) $('actPenReason').value = keepPen; if (keepKind) $('actPenKind').value = keepKind;
   bar.classList.add('show');
 }
+window.toggleFav = function (i) {
+  const x = cfg.reasons[i]; if (!x) return;
+  let fav = favReasons().map(r => r.label);
+  fav = fav.includes(x.label) ? fav.filter(l => l !== x.label) : [...fav, x.label].slice(-4);
+  try { localStorage.setItem('beast.fav.' + (me?.id || ''), JSON.stringify(fav)); } catch (e) { }
+  renderActBar(); renderGrid();
+};
+window.quickAward = async function (id) { const x = favReasons()[0]; if (!x) return; await award(id, x.pts, x.label); };
 window.actAward = async function (i) {
   const x = cfg.reasons[i]; const list = selBeasts(); if (!x || !list.length) return;
   selClear();
-  let got = 0, capped = 0;
+  let got = 0, capped = 0; const pairs = [];
   // 依序寫入：同時改同一個班級文件會互相衝突，排隊反而穩，動畫也會一隻接一隻跳
-  for (const b of list) { try { const a = await award(b._id, x.pts, x.label, true); if (a && a.delta > 0) got++; else capped++; } catch (e) { console.error(e); capped++; } }
-  showToast(list.length === 1 ? (got ? `${list[0].name} +${x.pts}：${x.label}` : '已達本週上限，未加分') : `${got} 人 +${x.pts}：${x.label}${capped ? `（${capped} 人已達上限）` : ''}`, got ? 'success' : 'error');
+  for (const b of list) { try { const a = await award(b._id, x.pts, x.label, true); if (a && a.delta > 0) { got++; pairs.push([b._id, a.logId]); } else capped++; } catch (e) { console.error(e); capped++; } }
+  showToast(list.length === 1 ? (got ? `${list[0].name} +${x.pts}：${x.label}` : '已達本週上限，未加分') : `${got} 人 +${x.pts}：${x.label}${capped ? `（${capped} 人已達上限）` : ''}`, got ? 'success' : 'error', undoToast(pairs));
 };
 window.actPenalty = async function (n) {
   const list = selBeasts(); if (!list.length) return;
   const kind = $('actPenKind').value, reason = $('actPenReason').value;
   if (list.length > 3 && !confirm(`對 ${list.length} 人${kind === 'pts' ? '扣靈氣' : '扣靈石'} ${n}（${reason}）？`)) return;
   selClear();
-  let done = 0, skip = 0;
-  for (const b of list) { try { const r = await penalize(b._id, kind, n, reason, true); if (r && !r.aborted) done++; else skip++; } catch (e) { console.error(e); skip++; } }
-  showToast(done ? `${done} 人${kind === 'pts' ? '扣靈氣' : '扣靈石'} ${n}：${reason}${skip ? `（${skip} 人無法再扣）` : ''}` : kind === 'pts' ? '靈氣已在境界門檻，無法再扣' : '已經欠到上限', done ? 'success' : 'error');
+  let done = 0, skip = 0; const pairs = [];
+  for (const b of list) { try { const r = await penalize(b._id, kind, n, reason, true); if (r && !r.aborted) { done++; pairs.push([b._id, r.logId]); } else skip++; } catch (e) { console.error(e); skip++; } }
+  showToast(done ? `${done} 人${kind === 'pts' ? '扣靈氣' : '扣靈石'} ${n}：${reason}${skip ? `（${skip} 人無法再扣）` : ''}` : kind === 'pts' ? '靈氣已在境界門檻，無法再扣' : '已經欠到上限', done ? 'success' : 'error', undoToast(pairs));
 };
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { selClear(); ['drawOv', 'boardOv', 'cdOv'].forEach(closeTool); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { selClear(); ['drawOv', 'boardOv', 'cdOv', 'grpOv', 'fmOv', 'repOv'].forEach(closeTool); } });
 
 // 全班縮到一頁：依人數與可用空間算出欄數與圖的大小
 function fitOn() { try { return localStorage.getItem('beast.fit') !== '0'; } catch (e) { return true; } }
@@ -1233,27 +1336,34 @@ window.setFit = function (v) { try { localStorage.setItem('beast.fit', v ? '1' :
 function fitGrid() {
   const g = $('beastGrid'); if (!g || !cls) return;
   if ($('fitToggle')) $('fitToggle').checked = fitOn();
-  if (!fitOn() || $('tab-class').style.display === 'none') { g.classList.remove('fit', 'compact'); return; }
+  const list = viewMode() === 'list';
+  if (list || (!fitOn() && !useSeats() && !seatEdit) || $('tab-class').style.display === 'none') { g.classList.remove('fit', 'compact'); g.style.removeProperty('--cols'); return; }
   const top = g.getBoundingClientRect().top + window.scrollY;
   const H = Math.max(260, window.innerHeight - top - 112);   // 底部留給加扣分列
-  fitInto(g, (cls.students || []).length, g.clientWidth, H, false);
+  const seated = useSeats() || seatEdit, st = seatsDraft || classState.seats || {};
+  fitInto(g, g.children.length, g.clientWidth, fitOn() ? H : 99999, false, seated ? (st.cols || 6) : 0);
 }
-function fitInto(g, n, W, H, pj) {
+function fitInto(g, n, W, H, pj, fixedCols = 0) {
   if (!n || !W || !g.children.length) return;
-  // 逐一試欄數：先套上去量實際文字高度，再算圖能多大；圖太小就多一欄
+  // 逐一試欄數：先套上去量實際文字高度，再算圖能多大；圖太小就多一欄（座位表欄數固定，改用精簡卡片）
   const gap = pj ? 12 : 10, maxW = pj ? 260 : 210, minW = pj ? 96 : 84, maxIh = pj ? 200 : 150, minIh = pj ? 70 : 54;
   g.classList.add('fit');
-  for (let cols = Math.max(1, Math.ceil((W + gap) / (maxW + gap))); cols <= n; cols++) {
+  const tries = [];
+  if (fixedCols) tries.push([fixedCols, false], [fixedCols, true]);
+  else for (let c = Math.max(1, Math.ceil((W + gap) / (maxW + gap))); c <= n; c++) tries.push([c, null]);
+  let last = null;
+  for (const [cols, forceCompact] of tries) {
     const cw = (W - gap * (cols - 1)) / cols;
-    g.classList.toggle('compact', cw < (pj ? 150 : 140));
+    g.classList.toggle('compact', forceCompact ?? cw < (pj ? 150 : 140));
     const ih0 = Math.floor(Math.min(cw - 16, maxIh));
     g.style.setProperty('--cols', cols); g.style.setProperty('--ih', ih0 + 'px');
-    let textH = 0; for (const c of g.children) textH = Math.max(textH, c.offsetHeight - ih0);
+    let textH = 0; for (const c of g.children) if (!c.classList.contains('seat-empty')) textH = Math.max(textH, c.offsetHeight - ih0);
     const rows = Math.ceil(n / cols);
-    const ihFit = Math.floor((H - gap * (rows - 1)) / rows - textH);
-    const ih = Math.min(ih0, ihFit);
-    if (ih >= minIh || cw <= minW) { g.style.setProperty('--ih', Math.max(36, ih) + 'px'); return; }
+    const ih = Math.min(ih0, Math.floor((H - gap * (rows - 1)) / rows - textH));
+    last = ih;
+    if (ih >= minIh || cw <= minW) { g.style.setProperty('--ih', Math.max(28, ih) + 'px'); return; }
   }
+  g.style.setProperty('--ih', Math.max(28, last) + 'px');
 }
 window.addEventListener('resize', () => { fitGrid(); if (projectorOn) renderProjector(); });
 
@@ -1383,10 +1493,234 @@ window.cfgAddGift = function (g = {}) {
 // ══════════════════════════════════════════════════════════════
 // 日間／夜間主題、投影時鐘與自動隱藏按鈕
 // ══════════════════════════════════════════════════════════════
-function applyTheme() { let t = 'dark'; try { t = localStorage.getItem('beast.theme') || 'dark'; } catch (e) { } document.body.classList.toggle('theme-warm', t === 'warm'); if ($('themeBtn')) $('themeBtn').textContent = t === 'warm' ? '🌙 夜間' : '☀️ 日間'; }
-window.toggleTheme = function () { let t = 'dark'; try { t = localStorage.getItem('beast.theme') || 'dark'; localStorage.setItem('beast.theme', t === 'warm' ? 'dark' : 'warm'); } catch (e) { } applyTheme(); };
+function applyTheme() { let t = 'warm'; try { t = localStorage.getItem('beast.theme') || 'warm'; } catch (e) { } document.body.classList.toggle('theme-warm', t === 'warm'); if ($('themeBtn')) $('themeBtn').textContent = t === 'warm' ? '🌙 夜間' : '☀️ 日間'; }
+window.toggleTheme = function () { let t = 'warm'; try { t = localStorage.getItem('beast.theme') || 'warm'; localStorage.setItem('beast.theme', t === 'warm' ? 'dark' : 'warm'); } catch (e) { } applyTheme(); };
 applyTheme();
 let pjIdleT = null;
 function pjWake() { const p = $('projector'); p.classList.remove('idle'); clearTimeout(pjIdleT); pjIdleT = setTimeout(() => p.classList.add('idle'), 4000); }
 ['mousemove', 'pointerdown', 'touchstart'].forEach(ev => $('projector').addEventListener(ev, () => { if (projectorOn) pjWake(); }, { passive: true }));
 setInterval(() => { if (!projectorOn) return; const t = taipeiNow(); $('pjClock').textContent = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; }, 1000);
+window.toggleActMore = function () { actMore = !actMore; renderActBar(); };
+
+// ══════════════════════════════════════════════════════════════
+// 格子／名單（手機遙控器）
+// ══════════════════════════════════════════════════════════════
+function viewMode() { try { return localStorage.getItem('beast.view') || (window.innerWidth < 700 ? 'list' : 'grid'); } catch (e) { return 'grid'; } }
+window.toggleView = function () { try { localStorage.setItem('beast.view', viewMode() === 'list' ? 'grid' : 'list'); } catch (e) { } gridCache.length = 0; renderGrid(); renderViewBtn(); };
+function renderViewBtn() { if ($('viewBtn')) $('viewBtn').textContent = viewMode() === 'list' ? '▦ 格子' : '☰ 名單'; }
+renderViewBtn();
+
+// ══════════════════════════════════════════════════════════════
+// 座位表（beastClass.seats = { cols, rows, order:[nameKey|null...] }）
+// ══════════════════════════════════════════════════════════════
+let seatEdit = false, seatsDraft = null, seatPick = null;
+window.toggleSeatEdit = function () {
+  if (!cls) return;
+  if (seatEdit) { seatEdit = false; seatsDraft = null; seatPick = null; gridCache.length = 0; renderGrid(); return; }
+  selClear();
+  const names = (cls.students || []).map(normName), cur = classState.seats;
+  if (cur && cur.cols) seatsDraft = { cols: cur.cols, rows: cur.rows, order: [...cur.order] };
+  else { const cols = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(names.length * 1.4)))); seatsDraft = { cols, rows: Math.ceil(names.length / cols), order: [...names] }; }
+  // 名單有、座位沒排到的人 → 放進空位
+  const placed = new Set(seatsDraft.order.filter(Boolean)), miss = names.filter(n => !placed.has(n));
+  seatsDraft.order = seatsDraft.order.map(k => k && names.includes(k) ? k : (miss.length ? miss.shift() : null));
+  while (miss.length) { seatsDraft.rows++; for (let i = 0; i < seatsDraft.cols; i++) seatsDraft.order.push(miss.shift() || null); }
+  seatEdit = true; seatPick = null; gridCache.length = 0; renderGrid();
+};
+function seatIndex(key) { return key.startsWith('#') ? +key.slice(1) : seatsDraft.order.indexOf(key); }
+window.seatTap = function (key) {
+  if (!seatEdit || !seatsDraft) return;
+  if (!seatPick) { seatPick = key; renderGrid(); return; }
+  const a = seatIndex(seatPick), b = seatIndex(key);
+  if (a >= 0 && b >= 0 && a !== b) { const o = seatsDraft.order; [o[a], o[b]] = [o[b], o[a]]; }
+  seatPick = null; renderGrid();
+};
+window.seatResize = function (dc, dr) {
+  const d = seatsDraft; if (!d) return;
+  const cols = Math.max(2, Math.min(10, d.cols + dc)), rows = Math.max(1, Math.min(10, d.rows + dr));
+  const keys = d.order.filter(Boolean);
+  if (cols * rows < keys.length) { showToast('座位不夠坐', 'error'); return; }
+  // 依原本的行列位置搬過去，放不下的再補空位
+  const grid = Array(cols * rows).fill(null), left = [];
+  d.order.forEach((k, i) => { if (!k) return; const r = Math.floor(i / d.cols), c = i % d.cols; if (r < rows && c < cols) grid[r * cols + c] = k; else left.push(k); });
+  for (const k of left) grid[grid.indexOf(null)] = k;
+  seatsDraft = { cols, rows, order: grid }; gridCache.length = 0; renderGrid();
+};
+window.seatSave = async function () {
+  try { await setDoc(doc(db, 'beastClass', cls._id), { seats: seatsDraft, updatedAt: Date.now() }, { merge: true }); classState.seats = seatsDraft; showToast('座位表已儲存'); }
+  catch (e) { showToast('儲存失敗：' + authErrMsg(e), 'error'); return; }
+  seatEdit = false; seatsDraft = null; seatPick = null; gridCache.length = 0; renderGrid();
+};
+window.seatClear = async function () {
+  if (!confirm('取消座位表，改回照名單排列？')) return;
+  try { await setDoc(doc(db, 'beastClass', cls._id), { seats: null, updatedAt: Date.now() }, { merge: true }); classState.seats = null; } catch (e) { showToast('失敗：' + authErrMsg(e), 'error'); return; }
+  seatEdit = false; seatsDraft = null; gridCache.length = 0; renderGrid();
+};
+function renderSeatBar() {
+  const bar = $('seatBar'); if (!bar) return;
+  if (!seatEdit) { bar.style.display = 'none'; if ($('seatBtn')) $('seatBtn').textContent = '🪑 座位表'; return; }
+  bar.style.display = '';
+  $('seatBtn').textContent = '✕ 不存離開';
+  bar.innerHTML = `<b>🪑 排座位</b><span>點一位，再點另一位（或空位）就會交換</span>
+    <span>欄 <button class="btn btn-ghost btn-sm" onclick="seatResize(-1,0)">−</button> ${seatsDraft.cols} <button class="btn btn-ghost btn-sm" onclick="seatResize(1,0)">＋</button></span>
+    <span>排 <button class="btn btn-ghost btn-sm" onclick="seatResize(0,-1)">−</button> ${seatsDraft.rows} <button class="btn btn-ghost btn-sm" onclick="seatResize(0,1)">＋</button></span>
+    <span style="flex:1"></span>${classState.seats ? '<button class="btn btn-ghost btn-sm" onclick="seatClear()">取消座位表</button>' : ''}<button class="btn btn-teal btn-sm" onclick="seatSave()">💾 儲存</button>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// 分組（beastClass.groups = { nameKey: 1~6 }）
+// ══════════════════════════════════════════════════════════════
+const GROUP_N = 6;
+window.openGroups = function () {
+  if (!cls) return;
+  $('grpList').innerHTML = (cls.students || []).map(n => { const k = normName(n), g = groupOf(k); return `<div class="grp-row"><span>${esc(n)}</span>${[0, 1, 2, 3, 4, 5, 6].map(i => `<button class="grp-pick ${i ? 'g' + i : ''} ${g === i ? 'on' : ''}" onclick="setGroup('${esc(k)}',${i})">${i || '—'}</button>`).join('')}</div>`; }).join('');
+  $('grpOv').classList.add('show');
+};
+window.setGroup = async function (k, g) {
+  const groups = { ...(classState.groups || {}) }; if (g) groups[k] = g; else delete groups[k];
+  try { await setDoc(doc(db, 'beastClass', cls._id), { groups, updatedAt: Date.now() }, { merge: true }); classState.groups = groups; openGroups(); renderGrid(); }
+  catch (e) { showToast('失敗：' + authErrMsg(e), 'error'); }
+};
+function renderGroupBtns() {
+  const box = $('grpBtns'); if (!box || !cls) return;
+  const gs = [...new Set(Object.values(classState.groups || {}))].sort();
+  box.innerHTML = gs.map(g => `<button class="btn btn-ghost btn-sm grp-sel g${g}" onclick="selGroup(${g})">第 ${g} 組</button>`).join('');
+}
+window.selGroup = function (g) {
+  const ids = (cls.students || []).filter(n => groupOf(normName(n)) === g).map(n => beasts[normName(n)]?._id).filter(Boolean);
+  const allIn = ids.length && ids.every(id => sel.has(id));
+  sel = allIn ? new Set() : new Set(ids); renderGrid(); renderActBar();
+};
+
+// ══════════════════════════════════════════════════════════════
+// 護山大陣：全班本週加的靈氣累積，集滿就啟動（老師定目標和獎勵）
+// ══════════════════════════════════════════════════════════════
+function formationGoal(cs = classState) { return cs.formationGoal || Math.max(10, (cls?.students || []).length * 8); }
+function formationState() {
+  const f = classState.formation || {}, wk = weekKey(), goal = formationGoal();
+  const pts = f.weekKey === wk ? (f.pts || 0) : 0;
+  return { pts, goal, fired: f.weekKey === wk && !!f.firedAt, firedAt: f.weekKey === wk ? f.firedAt || 0 : 0, reward: classState.formationReward || '' };
+}
+let fmSeen;
+function checkFormationFire() {
+  const fm = formationState();
+  if (fmSeen !== undefined && fm.firedAt && fm.firedAt !== fmSeen && Date.now() - fm.firedAt < 60000) {
+    bigBanner('🛡 護山大陣・啟動！', fm.reward ? `全班獎勵：${fm.reward}` : '全班一起做到了！', '#f6c343'); sfx('formation');
+  }
+  fmSeen = fm.firedAt;
+}
+window.openFormation = function () {
+  if (!cls) return; const fm = formationState();
+  $('fmInfo').innerHTML = `本週全班已累積 <b>${fm.pts}</b> / ${fm.goal} 靈氣${fm.fired ? '・<b style="color:var(--gold)">已啟動 🎉</b>' : ''}。每次加分都會灌進大陣（扣分不會倒扣），每週一歸零。`;
+  $('fmGoal').value = classState.formationGoal || ''; $('fmGoal').placeholder = `預設 ${Math.max(10, (cls.students || []).length * 8)}（每人 8）`;
+  $('fmReward').value = classState.formationReward || '';
+  $('fmOv').classList.add('show');
+};
+window.saveFormation = async function () {
+  const goal = Math.max(0, +$('fmGoal').value | 0), reward = $('fmReward').value.trim().slice(0, 40);
+  try { await setDoc(doc(db, 'beastClass', cls._id), { formationGoal: goal || null, formationReward: reward, updatedAt: Date.now() }, { merge: true }); showToast('已儲存'); closeTool('fmOv'); }
+  catch (e) { showToast('失敗：' + authErrMsg(e), 'error'); }
+};
+// 全螢幕大橫幅（不論有沒有開上課畫面都顯示）
+let _bigT = null;
+function bigBanner(main, sub, color) {
+  const b = $('bigBanner'); b.innerHTML = `${main}<small>${esc(sub || '')}</small>`; b.style.setProperty('--c', color || '#fff');
+  b.classList.remove('show'); void b.offsetWidth; b.classList.add('show'); clearTimeout(_bigT); _bigT = setTimeout(() => b.classList.remove('show'), 4200);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 上課畫面側欄：管家、計時器（搬過來的那組）、本週之星、進步最多
+// ══════════════════════════════════════════════════════════════
+function renderRail() {
+  if (!projectorOn || !cls) return;
+  const st = classState.steward || {};
+  const mood = !st.on ? 1 : scaredVisual() ? 5 : st.strikes ? 4 : st.paused ? 6 : 2;
+  const txt = !st.on ? '管家休息中' : scaredVisual() ? '😱 靈獸受驚中' : st.paused ? '⏸ 老師講課中' : st.strikes ? `🤫 已警告 ${st.strikes} 次` : '😊 大家好安靜';
+  const mine = sw.on;   // 這台裝置正在聽
+  $('railSteward').innerHTML = `<div class="rail-t">🔔 護山管家</div><div class="rs-row"><img src="assets/beasts/steward-mood-${mood}.png" alt=""><div><div class="rs-txt">${txt}</div>
+    ${mine ? `<div class="rs-meter"><div id="railMeter"></div></div>` : ''}</div></div>
+    <div class="rs-btns"><button class="btn btn-ghost btn-sm" onclick="toggleSteward()">${mine ? '關閉' : st.on ? '在這台開啟' : '開啟'}</button>${mine ? `<button class="btn btn-ghost btn-sm" onclick="pauseSteward()">${sw.paused ? '▶ 繼續' : '☕ 暫停'}</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="resetStrikes()">🔄 歸零</button></div>`;
+  // 本週之星（靈氣最多）、進步最多（比上週多最多）
+  const rows = (cls.students || []).map(n => beasts[normName(n)]).filter(Boolean).map(b => ({ b, ...weekStats(b) }));
+  const top = rows.filter(r => r.cur > 0).sort((a, b) => b.cur - a.cur).slice(0, 3);
+  const up = rows.map(r => ({ ...r, d: r.cur - r.prev })).filter(r => r.d > 0 && r.prev > 0).sort((a, b) => b.d - a.d).slice(0, 3);
+  const li = (r, v) => `<div class="star-row"><img src="${imgSrc(r.b.beast, stageOf(r.b.realm))}" onerror="this.onerror=null;this.src='${imgFallback(r.b.beast, stageOf(r.b.realm))}'" alt=""><span>${esc(r.b.name)}</span><b>${v}</b></div>`;
+  $('railStars').innerHTML = `<div class="rail-t">⭐ 本週之星</div>${top.map((r, i) => li(r, `${['🥇', '🥈', '🥉'][i]} +${r.cur}`)).join('') || '<div class="rail-empty">本週還沒有人加分</div>'}
+    <div class="rail-t" style="margin-top:10px">📈 進步最多</div>${up.map(r => li(r, `比上週 +${r.d}`)).join('') || '<div class="rail-empty">要有上週的紀錄才比得出來</div>'}`;
+}
+setInterval(() => { if (projectorOn && sw.on && $('railMeter') && $('meter')) $('railMeter').style.width = $('meter').style.width; }, 200);
+setInterval(() => { if (projectorOn) renderRail(); }, 1000);
+
+// ══════════════════════════════════════════════════════════════
+// 音效（每台裝置自己開關；預設開）
+// ══════════════════════════════════════════════════════════════
+function sfxOn() { try { return localStorage.getItem('beast.sfx') !== '0'; } catch (e) { return true; } }
+window.toggleSfx = function () { try { localStorage.setItem('beast.sfx', sfxOn() ? '0' : '1'); } catch (e) { } renderSfxBtn(); if (sfxOn()) sfx('up'); };
+function renderSfxBtn() { document.querySelectorAll('.sfx-btn').forEach(b => b.textContent = sfxOn() ? '🔊 音效' : '🔇 音效'); }
+renderSfxBtn();
+let _sfxAt = 0;
+function sfx(kind) {
+  if (!sfxOn() || Date.now() - _sfxAt < 250) return; _sfxAt = Date.now();
+  const c = actx(); if (!c) return;
+  const notes = kind === 'evolve' ? [[523.3, 0], [659.3, .1], [784, .2], [1046.5, .3], [1318.5, .42]]
+    : kind === 'formation' ? [[392, 0], [523.3, .15], [659.3, .3], [784, .45], [1046.5, .6], [784, .8], [1046.5, .95]]
+    : [[1046.5, 0], [1568, .09]];
+  notes.forEach(([f, t]) => { const o = c.createOscillator(), g = c.createGain(); o.type = 'triangle'; o.frequency.value = f; const t0 = c.currentTime + t; g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(.35, t0 + .015); g.gain.exponentialRampToValueAtTime(.001, t0 + (kind === 'up' ? .25 : .45)); o.connect(g).connect(c.destination); o.start(t0); o.stop(t0 + .5); });
+}
+
+// ══════════════════════════════════════════════════════════════
+// 家長週報：每位學生本週的加分紀錄整理成一段文字，可複製貼到 LINE
+// ══════════════════════════════════════════════════════════════
+window.openReport = async function () {
+  if (!cls) { showToast('請先選班級', 'error'); return; }
+  $('repOv').classList.add('show'); $('repList').innerHTML = '<div class="empty">整理中…</div>';
+  const wk = weekKey(), start = Date.parse(wk + 'T00:00:00+08:00');
+  const end = new Date(start + 6 * 86400000), md = d => `${d.getMonth() + 1}/${d.getDate()}`;
+  const out = [];
+  for (const n of cls.students || []) {
+    const b = beasts[normName(n)]; if (!b) continue;
+    let logs = [];
+    try { const sn = await getDocs(query(collection(db, 'beasts', b._id, 'log'), where('ts', '>=', start))); logs = sn.docs.map(d => d.data()).filter(l => !l.undone && l.type !== 'undo'); } catch (e) { console.error(e); }
+    const plus = {}; let ptsSum = 0, stoneSum = 0;
+    for (const l of logs) { if (l.delta > 0) { ptsSum += l.delta; const k = String(l.reason || '').replace(/（.*?）/g, ''); plus[k] = (plus[k] || 0) + 1; } if (l.stones > 0) stoneSum += l.stones; }
+    const info = BEAST_MAP[b.beast] || BEASTS[0], r = realmInfo(b.realm), nxt = nextRealm(b.realm);
+    const detail = Object.entries(plus).sort((a, c) => c[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}×${v}`).join('、');
+    const text = `【百宏靈獸・本週小報】${n}（${md(new Date(start))}～${md(end)}）\n本週獲得靈氣 +${ptsSum}${detail ? `（${detail}）` : ''}${stoneSum ? `，靈石 +${stoneSum}` : ''}\n本命靈獸：${b.petName || info.name}・${r.name}${nxt ? `，距離「${nxt.name}」還差 ${Math.max(0, nxt.pts - b.pts)} 靈氣` : '，已登頂！'}\n老師的話：`;
+    out.push({ n, text });
+  }
+  window.__rep = out;
+  $('repList').innerHTML = out.map((x, i) => `<div class="rep-item"><textarea class="field-input" id="rep${i}" rows="4">${esc(x.text)}</textarea><button class="btn btn-ghost btn-sm" onclick="copyRep(${i})">📋 複製</button></div>`).join('') || '<div class="empty">這班還沒有靈獸</div>';
+};
+window.copyRep = function (i) { const t = $('rep' + i).value; navigator.clipboard?.writeText(t).then(() => showToast('已複製，貼到 LINE 給家長')).catch(() => { $('rep' + i).select(); document.execCommand('copy'); showToast('已複製'); }); };
+window.copyRepAll = function () { const t = (window.__rep || []).map((_, i) => $('rep' + i).value).join('\n\n'); navigator.clipboard?.writeText(t).then(() => showToast('全部已複製')).catch(() => showToast('複製失敗，請逐一複製', 'error')); };
+
+// ══════════════════════════════════════════════════════════════
+// 靈獸週年：選獸滿一年（兩年…）那天，上課畫面放慶祝橫幅（每天一次）
+// ══════════════════════════════════════════════════════════════
+function checkAnniversary() {
+  const t = taipeiNow(), mmdd = t.toISOString().slice(5, 10), today = t.toISOString().slice(0, 10);
+  const list = (cls?.students || []).map(n => beasts[normName(n)]).filter(b => b && b.createdAt).map(b => ({ b, d: taipeiNow(b.createdAt) }))
+    .filter(x => x.d.toISOString().slice(5, 10) === mmdd && x.d.getUTCFullYear() < t.getUTCFullYear());
+  if (!list.length) return;
+  const key = `beast.anni.${cls._id}.${today}`; try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) { }
+  setTimeout(() => { bigBanner(`🎂 靈獸週年快樂！`, list.map(x => `${x.b.name} 的${BEAST_MAP[x.b.beast]?.name || '靈獸'} ${t.getUTCFullYear() - x.d.getUTCFullYear()} 歲了`).join('、'), '#ff9ecb'); sfx('evolve'); }, 1200);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 主管：靈獸改綁到新姓名（班表名字打錯、改名時用；紀錄全部保留）
+// ══════════════════════════════════════════════════════════════
+window.relinkBeast = async function (beastId) {
+  if (!me.isAdmin) return;
+  const b = curBeast(); if (!b) return;
+  const nn = (prompt(`把「${b.name}」的靈獸改綁到哪個姓名？（要和班級名單上的寫法一致）`, b.name) || '').trim(); if (!nn || normName(nn) === b.nameKey) return;
+  const nk = normName(nn);
+  const ex = await getDocs(query(collection(db, 'beasts'), where('nameKey', '==', nk))).catch(() => null);
+  if (ex && !ex.empty) { showToast('這個姓名已經有靈獸了', 'error'); return; }
+  const inRoster = allClasses.filter(c => (c.students || []).map(normName).includes(nk)).length;
+  if (!inRoster && !confirm(`目前沒有任何班級名單有「${nn}」，確定要改綁嗎？`)) return;
+  try {
+    await updateDoc(doc(db, 'beasts', beastId), { name: nn, nameKey: nk, courseCount: Math.max(1, inRoster), updatedAt: Date.now() });
+    await addLog(beastId, { type: 'item', reason: `改綁姓名：${b.name} → ${nn}` });
+    showToast('已改綁，重新整理後生效'); closeStudent();
+  } catch (e) { showToast('失敗：' + authErrMsg(e), 'error'); }
+};

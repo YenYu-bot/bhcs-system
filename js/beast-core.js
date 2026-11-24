@@ -219,7 +219,8 @@ export function normName(s) { return String(s || '').replace(/\s+/g, '').trim();
 export function rollWeek(b, now = Date.now()) {
   const wk = weekKey(now);
   if (b.weekKey === wk) return {};
-  return { weekKey: wk, weekPts: 0, weekStones: 0, weekBuys: {} };
+  const last = weekKey(now - 7 * 86400000);   // 上週的靈氣留著，算「進步最多」
+  return { weekKey: wk, weekPts: 0, weekStones: 0, weekBuys: {}, prevWeekPts: b.weekKey === last ? (b.weekPts || 0) : 0 };
 }
 
 // 加分試算：回傳 { delta, capped, halved, doubled }（純函式；transaction 內用）
@@ -292,4 +293,12 @@ export function pickWeighted(segs, r = Math.random()) {
   let x = r * total;
   for (let i = 0; i < segs.length; i++) { x -= Math.max(0, +segs[i].weight || 0) || (total === segs.length ? 1 : 0); if (x < 0) return i; }
   return segs.length - 1;
+}
+
+// 本週／上週靈氣（沒有加過分的靈獸，週次可能還停在以前）
+export function weekStats(b, now = Date.now()) {
+  const wk = weekKey(now), last = weekKey(now - 7 * 86400000);
+  if (b.weekKey === wk) return { cur: b.weekPts || 0, prev: b.prevWeekPts || 0 };
+  if (b.weekKey === last) return { cur: 0, prev: b.weekPts || 0 };
+  return { cur: 0, prev: 0 };
 }

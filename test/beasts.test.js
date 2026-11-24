@@ -104,6 +104,7 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   await page.click('#studentModal >> text=✕'); await wait(200);
 
   // 全班目標：+2 不受上限
+  await page.click('#classStats .chip:has-text("目標")'); await wait(100);
   await page.fill('#goalText', '作業全交'); await page.press('#goalText', 'Tab'); await wait(300);
   await page.click('#goalBtn'); await wait(500);
   b = await beast(); eq(b.pts, 99, 'goal +2');
