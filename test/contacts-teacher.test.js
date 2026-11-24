@@ -11,7 +11,7 @@ const fs = require('fs');
       c: { name:'丙', phones:['0944'], sourceClasses:['Z班'], teacherIds:['t2'], classTeachers:{Z班:'t2'}, active:true },
       d: { name:'丁', phones:['0955'], sourceClasses:['W班'], teacherIds:['t1'], classTeachers:{}, active:true },
     };
-    S.contacts = { k1: { studentId:'a', studentName:'甲', teacherId:'t1', teacherName:'T', date:'2026-10-20', method:'noanswer', content:'沒接' } };
+    S.contacts = { k1: { studentId:'a', studentName:'甲', teacherId:'t1', teacherName:'T', date:(d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date()), method:'noanswer', content:'沒接' } };
   });
   await t.setupAdmin(); await t.addTeacher('T', 't1'); await t.logout(); await t.login('t1', 'teach123');
   await page.click('#appPage >> text=📞 電訪表'); await page.waitForTimeout(300);
