@@ -6,6 +6,9 @@ const col = name => (store[name] = store[name] || {});
 const clone = d => d === undefined ? undefined : JSON.parse(JSON.stringify(d));
 const listeners = new Set();
 export function getFirestore() { return { __db: true }; }
+export function initializeFirestore() { return { __db: true }; }
+export function persistentLocalCache(o) { return o || {}; }
+export function persistentMultipleTabManager() { return {}; }
 // collection(db, 'a') / collection(db, 'a', id, 'sub') / collection(docRef, 'sub')
 export function collection(dbOrRef, ...segs) {
   const base = dbOrRef && dbOrRef.kind === 'doc' ? [dbOrRef.name, dbOrRef.id] : [];

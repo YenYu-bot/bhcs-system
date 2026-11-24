@@ -627,3 +627,12 @@ body.theme-warm .rail-sec{background:#fffaf2;}
 .pj-rail .rail-sec{padding:10px;}
 .pj-rail .rs-row img{width:48px;height:48px;}
 .projector .pj-card .beast-realm.pj-realm{background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.15);}
+
+/* 被冷落的學生、公平報表 */
+.beast-card.quiet{border-style:dashed;border-color:rgba(79,179,109,.55);}
+.quiet-tag{position:absolute;top:6px;right:8px;font-size:15px;z-index:3;opacity:.9;}
+.beast-card.sel .quiet-tag{display:none;}
+.beast-grid.list .quiet-tag{bottom:auto;top:4px;right:72px;}
+.class-stats .chip.quiet-chip{border-color:rgba(79,179,109,.6);color:#3f9a5c;}
+table.rep tr.rep-hi td{background:rgba(255,159,67,.12);}
+table.rep tr.rep-lo td{background:rgba(61,143,214,.10);}
