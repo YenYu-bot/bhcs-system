@@ -29,7 +29,7 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   const beast = async () => (await t.store()).beasts[bid];
 
   // 加分：固定原因 +1，自訂 +10 ×4 → 2 門課上限 38
-  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(300);
+  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(200); await page.click('#actBar button:has-text("詳細")'); await wait(300);
   ok(await visible('#studentModal'), 'student modal');
   await page.click('#st-award .reason-btn:has-text("準時到班")'); await wait(300);
   eq((await beast()).pts, 1, '+1');
@@ -67,7 +67,7 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
 
   // 商店：靈石不足 → 按鈕 disabled；塞 100 靈石 → 買仙帽、聚靈丹 → 下次加分 ×2
   await page.click('#tabs .tab:has-text("課堂")'); await wait(200);
-  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(300);
+  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(200); await page.click('#actBar button:has-text("詳細")'); await wait(300);
   await page.click('#smTabs .tab:has-text("商店")'); await wait(200);
   ok(await page.locator('#st-shop .deco-chip:has-text("青銅")').isDisabled(), 'cannot afford bronze frame');
   await t.seed(() => { Object.values(window.__store.beasts)[0].stones = 100; window.__notify(); });
@@ -122,7 +122,7 @@ const { launch } = require('./helpers'); const { eq, ok, includes } = require('.
   // 主管刪除並還原（放在學生頁之後跑：先記住 store 給學生頁用）
   const dumpBefore = await t.store();
   await page.click('#tabs .tab:has-text("課堂")'); await page.selectOption('#classSelect', 'c1'); await wait(400);
-  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(300);
+  await page.locator('#beastGrid .beast-card[data-id]').first().click(); await wait(200); await page.click('#actBar button:has-text("詳細")'); await wait(300);
   await page.click('#smTabs .tab:has-text("紀錄")'); await wait(300);
   t.setPrompts(['甲']); await page.click('#st-log button:has-text("刪除並還原")'); await wait(800);
   const after = await t.store();
