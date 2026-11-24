@@ -9,7 +9,7 @@
 //   beastTasks/{id}         : 任務（靈石），依 classId
 //   beastClass/{classId}    : 班級狀態：全班目標、本週靈石發放總額、管家狀態、月統計
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, query, where, orderBy, limit, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, query, where, orderBy, limit, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
 import { REALMS, STAGE_NAMES, TRIAL_HINTS, BEASTS, BEAST_MAP, SHOP, SHOP_MAP, DEFAULT_CONFIG, mergeConfig,
   weekKey, dayKey, monthKey, multiplier, capWeekPts, capWeekStones, capHoldStones, realmFor, realmInfo, nextRealm, progress,
@@ -27,7 +27,8 @@ const firebaseConfig = {
   appId: "1:920353312937:web:7517cabddd3aacd83659b8"
 };
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+// 離線快取：教室網路斷掉時畫面照常顯示（寫入另由下方「離線補登」佇列處理）
+let db; try { db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); } catch (e) { console.warn(e); db = getFirestore(app); }
 const auth = getAuth(app);
 const AUTH_DOMAIN_SUFFIX = '@bhcs.local', ADMIN_USER = 'admin', ADMIN_EMAIL = 'admin@bhcs.local';
 
@@ -177,7 +178,7 @@ window.selectClass = function (id) {
   }
   unsubs.push(onSnapshot(doc(db, 'beastClass', cls._id), snap => { classState = snap.exists() ? snap.data() : {}; renderClassBar(); renderGrid(); renderStewardRemote(); }));
   unsubs.push(onSnapshot(query(collection(db, 'beastTasks'), where('classId', '==', cls._id)), snap => { tasks = snap.docs.map(d => ({ _id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt); renderTasks(); }));
-  renderGrid(); renderTaskPick();
+  renderGrid(); renderTaskPick(); setTimeout(oqFlush, 1500);
 };
 function csWeek() { const wk = weekKey(); const iss = classState.issued || {}; return iss.weekKey === wk ? (iss.total || 0) : 0; }
 function classBudget() { return (cls?.students || []).length * cfg.caps.classWeekPerStudent; }
@@ -191,6 +192,10 @@ function renderClassBar() {
   const chips = [`<span class="chip click" onclick="toggleGoal()">🎯 ${gtext ? esc(gtext) + (g.doneWeek === wk ? ' ✅' : '') : '設定本週目標'}</span>`];
   const fm = formationState();
   chips.push(`<span class="chip click ${fm.fired ? 'good' : ''}" onclick="openFormation()">🛡 護山大陣 ${fm.pts}/${fm.goal}${fm.fired ? ' 已啟動' : ''}</span>`);
+  const qn = quietList().length;
+  if (qn) chips.push(`<span class="chip click quiet-chip" onclick="selQuiet()" title="點一下選取他們">🌱 ${qn} 人本週還沒加分</span>`);
+  const oq = oqMine().length;
+  if (!navigator.onLine || oq) chips.push(`<span class="chip bad">📴 ${navigator.onLine ? '' : '離線中'}${oq ? `${navigator.onLine ? '' : '・'}${oq} 筆待上傳` : ''}</span>`);
   chips.push(`<span class="chip">本週靈石額度 ${used}/${budget}${used >= budget ? '（已用完）' : ''}</span>`);
   if (scaredVisual()) chips.push(`<span class="chip bad">😨 受驚中${scaredNow() ? '，加分減半' : ''}至 ${fmtTs(classState.steward.scaredUntil).slice(-5)}</span>`);
   if ((classState.steward || {}).on) chips.push(`<span class="chip warn">🔔 管家 ${classState.steward.strikes || 0}/2</span>`);
@@ -222,8 +227,9 @@ function cardHtml(b, name, pj = false) {
   const title = titleOf(b), stars = forgeStars(b.forge);
   const fav = favReasons()[0];
   const pick = seatEdit && seatPick === normName(name) ? 'seat-pick' : '';
-  return `<div class="${pj ? 'pj-card' : 'beast-card'} ${sel.has(b._id) ? 'sel' : ''} ${pick} stage-${r.stage} ${scared ? 'scared' : ''} ${decoClasses(b)}" style="--c:${info.color}" data-id="${b._id}" onclick="cardTap('${b._id}')">
-    <span class="sel-mark">✓</span>${gdot}${stars && !pj ? `<span class="forge-stars">${stars}</span>` : ''}${b.julingActive && !pj ? '<span class="mark2">聚靈</span>' : ''}
+  const quiet = !pj && !awardedThisWeek()[b.nameKey];   // 本週還沒在這班被加過分（只在老師畫面標）
+  return `<div class="${pj ? 'pj-card' : 'beast-card'} ${sel.has(b._id) ? 'sel' : ''} ${pick} ${quiet ? 'quiet' : ''} stage-${r.stage} ${scared ? 'scared' : ''} ${decoClasses(b)}" style="--c:${info.color}" data-id="${b._id}" onclick="cardTap('${b._id}')">
+    <span class="sel-mark">✓</span>${gdot}${quiet ? '<span class="quiet-tag" title="本週還沒在這班加過分">🌱</span>' : ''}${stars && !pj ? `<span class="forge-stars">${stars}</span>` : ''}${b.julingActive && !pj ? '<span class="mark2">聚靈</span>' : ''}
     ${img(b, '', scared)}${pj ? `<div class="beast-realm pj-realm ${pend ? 'trial' : ''}">${pend ? '⚡' : ''}${r.name}</div>` : ''}
     <div class="beast-name">${esc(b.name)}</div>
     ${pj ? '' : `<div class="beast-pet">${esc(b.petName || info.name)}</div>${title ? `<div class="beast-title">${esc(title)}</div>` : ''}
@@ -403,6 +409,21 @@ function statPatch(cs, field, n) {
   const mk = monthKey(); const stats = { ...(cs.stats || {}) }; const m = { ...(stats[mk] || {}) };
   m[field] = (m[field] || 0) + n; stats[mk] = m; return { stats };
 }
+// 老師別月統計（公平報表）：stats[月].byT[老師] = { 加分次數、靈氣、扣分、照顧到的學生、常用原因 }
+function teacherStat(stats, log, nk, sign = 1, who = me) {
+  if (!who || !log) return stats;
+  const isAward = log.delta > 0 && (log.type === 'pts' || log.type === 'goal'), isPen = log.type === 'penalty';
+  if (!isAward && !isPen) return stats;
+  const mk = monthKey(log.ts || Date.now()), st = { ...(stats || {}) }, m = { ...(st[mk] || {}) }, by = { ...(m.byT || {}) };
+  const t = { name: who.name || '', pts: 0, awards: 0, pen: 0, penPts: 0, kids: {}, reasons: {}, ...(by[who.id] || {}) };
+  if (isAward) {
+    t.pts = Math.max(0, t.pts + sign * log.delta); t.awards = Math.max(0, t.awards + sign);
+    const k = String(log.reason || '').replace(/（.*?）/g, '').slice(0, 16) || '其他';
+    const kc = Math.max(0, (t.kids[nk] || 0) + sign), rc = Math.max(0, (t.reasons[k] || 0) + sign);
+    t.kids = { ...t.kids, [nk]: kc }; t.reasons = { ...t.reasons, [k]: rc };   // 次數；撤銷時扣回
+  } else { t.pen = Math.max(0, t.pen + sign); t.penPts = Math.max(0, t.penPts + sign * Math.abs(log.delta || log.stones || 0)); }
+  by[who.id] = t; m.byT = by; st[mk] = m; return st;
+}
 // 通用交易：fn(b, cs) → { patch, log, csPatch }；自動重算境界、寫 log、更新班級統計
 async function tx(beastId, fn, { touchClass = false } = {}) {
   const bref = doc(db, 'beasts', beastId);
@@ -434,6 +455,11 @@ async function tx(beastId, fn, { touchClass = false } = {}) {
         cp.formation = { weekKey: wk, pts: cur + fd, firedAt: f.weekKey === wk ? (f.firedAt || 0) : 0 };
         if (goal && cur < goal && cur + fd >= goal) cp.formation.firedAt = Date.now();
       }
+      // 這個班本週誰被加過分（找出被冷落的學生）＋老師別統計
+      if (touchClass && r.log) {
+        if (fd) { const wk = weekKey(), aw = cs.awarded && cs.awarded.weekKey === wk ? cs.awarded.n || {} : {}; cp.awarded = { weekKey: wk, n: { ...aw, [b.nameKey]: (aw[b.nameKey] || 0) + 1 } }; }
+        const ts = teacherStat(cp.stats || cs.stats, r.log, b.nameKey); if (ts !== (cp.stats || cs.stats)) cp.stats = ts;
+      }
       t.set(cref, cp, { merge: true });
     }
     return { patch, realmUp: newRealm > b.realm ? newRealm : 0, extra: r.extra, logId };
@@ -443,6 +469,7 @@ async function tx(beastId, fn, { touchClass = false } = {}) {
 // ── 加分 ──
 window.award = async function (beastId, pts, reason, quiet = false) {
   pts = pts | 0; if (pts <= 0 || !reason) return;
+  if (!navigator.onLine && !oqReplaying) return offlineQueue({ k: 'award', id: beastId, pts, reason }, quiet);
   try {
     const res = await tx(beastId, (b, cs) => {
       const st = cs.steward || {};
@@ -458,11 +485,12 @@ window.award = async function (beastId, pts, reason, quiet = false) {
     if (quiet) return a;
     showToast(a.delta > 0 ? `+${a.delta} 靈氣${a.capped ? '（達本週上限）' : a.doubled ? '（聚靈丹 ×2）' : a.halved ? '（受驚減半）' : ''}` : '已達本週上限，未加分', a.delta > 0 ? 'success' : 'error', a.delta > 0 ? undoToast([[beastId, res.logId]]) : null);
     return a;
-  } catch (e) { console.error(e); if (quiet) throw e; showToast('加分失敗：' + authErrMsg(e), 'error'); }
+  } catch (e) { console.error(e); if (isNetErr(e) && !oqReplaying) return offlineQueue({ k: 'award', id: beastId, pts, reason }, quiet); if (quiet) throw e; showToast('加分失敗：' + authErrMsg(e), 'error'); }
 };
 // ── 懲罰（扣靈氣 / 扣靈石）──
 window.penalize = async function (beastId, kind, n, reason, quiet = false) {
   n = Math.abs(n | 0); if (!n || !reason) { showToast('請填數量與原因', 'error'); return; }
+  if (!navigator.onLine && !oqReplaying) return offlineQueue({ k: 'pen', id: beastId, kind, n, reason }, quiet);
   try {
     const r = await tx(beastId, b => {
       if (kind === 'pts') { const d = penaltyPts(b, n, cfg); if (!d) return { abort: '靈氣已在境界門檻，無法再扣' }; return { patch: { pts: b.pts - d }, log: { type: 'penalty', delta: -d, reason }, stat: ['penaltyPts', d] }; }
@@ -471,7 +499,7 @@ window.penalize = async function (beastId, kind, n, reason, quiet = false) {
     }, { touchClass: true });
     if (quiet) return r;
     if (r.aborted) showToast(r.aborted, 'error'); else showToast('已記錄懲罰', 'success', undoToast([[beastId, r.logId]]));
-  } catch (e) { console.error(e); if (quiet) throw e; showToast('失敗：' + authErrMsg(e), 'error'); }
+  } catch (e) { console.error(e); if (isNetErr(e) && !oqReplaying) return offlineQueue({ k: 'pen', id: beastId, kind, n, reason }, quiet); if (quiet) throw e; showToast('失敗：' + authErrMsg(e), 'error'); }
 };
 // ── 試煉 ──
 window.trial = async function (beastId, pass) {
@@ -622,6 +650,9 @@ window.undoLog = async function (beastId, logId, quiet = false) {
         Object.assign(cp, statPatch(cs, f[0], f[1]));
         const fm = cs.formation || {};
         if (sameWeek && l.delta > 0 && (l.type === 'pts' || l.type === 'goal') && fm.weekKey === weekKey()) cp.formation = { ...fm, pts: Math.max(0, (fm.pts || 0) - l.delta) };
+        const aw = cs.awarded || {};
+        if (sameWeek && l.delta > 0 && (l.type === 'pts' || l.type === 'goal') && aw.weekKey === weekKey() && (aw.n || {})[b.nameKey]) cp.awarded = { ...aw, n: { ...aw.n, [b.nameKey]: aw.n[b.nameKey] - 1 } };
+        if (monthKey(l.ts) === monthKey()) cp.stats = teacherStat(cp.stats || cs.stats, l, b.nameKey, -1, { id: l.by, name: l.byName });
         t.set(cref, cp, { merge: true });
       }
       return true;
@@ -1188,6 +1219,8 @@ window.openProjector = function () {
   checkAnniversary();
 };
 window.closeProjector = function () {
+  const ql = quietList(), total = (cls?.students || []).filter(n => beasts[normName(n)]).length;
+  if (ql.length && ql.length < total) setTimeout(() => showToast(`🌱 本週還沒在這班加過分：${ql.slice(0, 5).map(b => b.name).join('、')}${ql.length > 5 ? ` 等 ${ql.length} 人` : ''}`, 'success'), 400);
   projectorOn = false; document.body.classList.remove('pj-on'); selClear();
   $('stTimersHome').appendChild($('stTimers'));
   $('projector').style.display = 'none'; document.exitFullscreen?.().catch(() => { });
@@ -1263,6 +1296,20 @@ async function loadReport() {
   const tot = rows.reduce((a, r) => { for (const k of ['ptsIssued', 'stonesIssued', 'stonesSpent', 'penaltyPts', 'penaltyStones']) a[k] = (a[k] || 0) + (r[k] || 0); return a; }, {});
   $('reportBody').innerHTML = rows.length ? `<table class="rep"><tr><th>班級</th><th>靈氣發出</th><th>靈氣扣除</th><th>靈石發出</th><th>靈石花掉</th><th>靈石扣除</th><th>發出/花掉</th></tr>
     ${[...rows, { name: '合計', ...tot }].map(r => `<tr><td>${esc(r.name)}</td><td>${r.ptsIssued || 0}</td><td>${r.penaltyPts || 0}</td><td>${r.stonesIssued || 0}</td><td>${r.stonesSpent || 0}</td><td>${r.penaltyStones || 0}</td><td>${r.stonesSpent ? (r.stonesIssued / r.stonesSpent).toFixed(1) : '—'}</td></tr>`).join('')}</table>` : '<div class="empty">本月尚無資料</div>';
+  // 老師之間的公平：各老師加分量、照顧到多少學生、常用原因
+  const byT = {};
+  for (const d of snap?.docs || []) for (const [tid, t] of Object.entries((((d.data().stats || {})[mk] || {}).byT) || {})) {
+    const a = byT[tid] || (byT[tid] = { name: t.name, pts: 0, awards: 0, pen: 0, penPts: 0, kids: {}, reasons: {} });
+    a.pts += t.pts || 0; a.awards += t.awards || 0; a.pen += t.pen || 0; a.penPts += t.penPts || 0; for (const [k, v] of Object.entries(t.kids || {})) if (v > 0) a.kids[k] = 1;
+    for (const [k, v] of Object.entries(t.reasons || {})) if (v > 0) a.reasons[k] = (a.reasons[k] || 0) + v;
+  }
+  const roster = tid => { const set = new Set(); for (const c of allClasses) if (c.teacherId === tid || (c.memberIds || []).includes(tid)) (c.students || []).forEach(n => set.add(normName(n))); return set.size; };
+  const trs = Object.entries(byT).sort((a, b) => b[1].pts - a[1].pts);
+  const ptsList = trs.map(([, t]) => t.pts).sort((a, b) => a - b), med = ptsList.length ? ptsList[Math.floor((ptsList.length - 1) / 2)] : 0;
+  $('reportTeachers').innerHTML = trs.length ? `<table class="rep"><tr><th>老師</th><th>加分次數</th><th>發出靈氣</th><th>平均每次</th><th>照顧到的學生</th><th>扣分次數</th><th>最常用的原因</th></tr>
+    ${trs.map(([tid, t]) => { const n = roster(tid), k = Object.keys(t.kids).length, hi = med && t.pts > med * 2, lo = med && t.pts < med / 2;
+      return `<tr class="${hi ? 'rep-hi' : lo ? 'rep-lo' : ''}"><td>${esc(t.name || tid)}</td><td>${t.awards}</td><td>${t.pts}${hi ? ' ⬆' : lo ? ' ⬇' : ''}</td><td>${t.awards ? (t.pts / t.awards).toFixed(1) : '—'}</td><td>${k}${n ? ` / ${n}（${Math.round(k / n * 100)}%）` : ''}</td><td>${t.pen}</td><td style="text-align:left">${Object.entries(t.reasons).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([r, v]) => `${esc(r)}×${v}`).join('、')}</td></tr>`; }).join('')}</table>
+    <div class="hint">⬆ 超過中位數 2 倍、⬇ 不到一半，可以找老師聊聊標準是否一致。「照顧到的學生」低，代表有不少學生整個月沒被加過分。本表從這個版本上線後開始統計。</div>` : '<div class="empty">本月尚無老師統計（這個版本上線後開始累積）</div>';
 }
 async function loadHall() {
   const snap = await getDocs(query(collection(db, 'beasts'), where('hall', '==', true))).catch(() => null);
@@ -1314,10 +1361,10 @@ window.quickAward = async function (id) { const x = favReasons()[0]; if (!x) ret
 window.actAward = async function (i) {
   const x = cfg.reasons[i]; const list = selBeasts(); if (!x || !list.length) return;
   selClear();
-  let got = 0, capped = 0; const pairs = [];
+  let got = 0, capped = 0, queued = 0; const pairs = [];
   // 依序寫入：同時改同一個班級文件會互相衝突，排隊反而穩，動畫也會一隻接一隻跳
-  for (const b of list) { try { const a = await award(b._id, x.pts, x.label, true); if (a && a.delta > 0) { got++; pairs.push([b._id, a.logId]); } else capped++; } catch (e) { console.error(e); capped++; } }
-  showToast(list.length === 1 ? (got ? `${list[0].name} +${x.pts}：${x.label}` : '已達本週上限，未加分') : `${got} 人 +${x.pts}：${x.label}${capped ? `（${capped} 人已達上限）` : ''}`, got ? 'success' : 'error', undoToast(pairs));
+  for (const b of list) { try { const a = await award(b._id, x.pts, x.label, true); if (a && a.delta > 0) { got++; if (a.queued) queued++; else pairs.push([b._id, a.logId]); } else capped++; } catch (e) { console.error(e); capped++; } }
+  showToast(list.length === 1 ? (got ? `${list[0].name} +${x.pts}：${x.label}` : '已達本週上限，未加分') : `${got} 人 +${x.pts}：${x.label}${capped ? `（${capped} 人已達上限）` : ''}${queued ? '（離線，連線後自動補上）' : ''}`, got ? 'success' : 'error', undoToast(pairs));
 };
 window.actPenalty = async function (n) {
   const list = selBeasts(); if (!list.length) return;
@@ -1325,7 +1372,7 @@ window.actPenalty = async function (n) {
   if (list.length > 3 && !confirm(`對 ${list.length} 人${kind === 'pts' ? '扣靈氣' : '扣靈石'} ${n}（${reason}）？`)) return;
   selClear();
   let done = 0, skip = 0; const pairs = [];
-  for (const b of list) { try { const r = await penalize(b._id, kind, n, reason, true); if (r && !r.aborted) { done++; pairs.push([b._id, r.logId]); } else skip++; } catch (e) { console.error(e); skip++; } }
+  for (const b of list) { try { const r = await penalize(b._id, kind, n, reason, true); if (r && !r.aborted) { done++; if (!r.queued) pairs.push([b._id, r.logId]); } else skip++; } catch (e) { console.error(e); skip++; } }
   showToast(done ? `${done} 人${kind === 'pts' ? '扣靈氣' : '扣靈石'} ${n}：${reason}${skip ? `（${skip} 人無法再扣）` : ''}` : kind === 'pts' ? '靈氣已在境界門檻，無法再扣' : '已經欠到上限', done ? 'success' : 'error', undoToast(pairs));
 };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { selClear(); ['drawOv', 'boardOv', 'cdOv', 'grpOv', 'fmOv', 'repOv'].forEach(closeTool); } });
@@ -1350,7 +1397,7 @@ function fitInto(g, n, W, H, pj, fixedCols = 0) {
   g.classList.add('fit');
   const tries = [];
   if (fixedCols) tries.push([fixedCols, false], [fixedCols, true]);
-  else for (let c = Math.max(1, Math.ceil((W + gap) / (maxW + gap))); c <= n; c++) tries.push([c, null]);
+  else for (let c = Math.min(n, Math.max(1, Math.ceil((W + gap) / (maxW + gap)))); c <= n; c++) tries.push([c, null]);
   let last = null;
   for (const [cols, forceCompact] of tries) {
     const cw = (W - gap * (cols - 1)) / cols;
@@ -1363,7 +1410,7 @@ function fitInto(g, n, W, H, pj, fixedCols = 0) {
     last = ih;
     if (ih >= minIh || cw <= minW) { g.style.setProperty('--ih', Math.max(28, ih) + 'px'); return; }
   }
-  g.style.setProperty('--ih', Math.max(28, last) + 'px');
+  if (last != null) g.style.setProperty('--ih', Math.max(28, last) + 'px');
 }
 window.addEventListener('resize', () => { fitGrid(); if (projectorOn) renderProjector(); });
 
@@ -1724,3 +1771,53 @@ window.relinkBeast = async function (beastId) {
     showToast('已改綁，重新整理後生效'); closeStudent();
   } catch (e) { showToast('失敗：' + authErrMsg(e), 'error'); }
 };
+
+// ══════════════════════════════════════════════════════════════
+// 被冷落的學生：本週還沒在這個班被加過分（beastClass.awarded）
+// ══════════════════════════════════════════════════════════════
+function awardedThisWeek() { const a = classState.awarded || {}; return a.weekKey === weekKey() ? (a.n || {}) : {}; }
+function quietList() { if (!cls) return []; const aw = awardedThisWeek(); return (cls.students || []).map(n => beasts[normName(n)]).filter(b => b && !aw[b.nameKey]); }
+window.selQuiet = function () { const ids = quietList().map(b => b._id); sel = new Set(ids); renderGrid(); renderActBar(); showToast(`已選取 ${ids.length} 位本週還沒加分的學生`); };
+
+// ══════════════════════════════════════════════════════════════
+// 離線補登：網路斷掉時加扣分先存在這台裝置，連線後依序補上（理由後面註明）
+// ══════════════════════════════════════════════════════════════
+let oqReplaying = false;
+const OQ_KEY = 'beast.offlineQueue';
+function oqLoad() { try { return JSON.parse(localStorage.getItem(OQ_KEY) || '[]'); } catch (e) { return []; } }
+function oqSave(q) { try { localStorage.setItem(OQ_KEY, JSON.stringify(q)); } catch (e) { } }
+function oqMine() { return cls ? oqLoad().filter(x => x.classId === cls._id) : []; }
+function isNetErr(e) { return !navigator.onLine || /unavailable|deadline-exceeded|network|offline|failed to fetch/i.test(String((e && (e.code || e.message)) || '')); }
+function offlineQueue(op, quiet) {
+  if (!cls) return;
+  const q = oqLoad(); q.push({ ...op, classId: cls._id, at: Date.now(), by: me.id }); oqSave(q);
+  // 畫面先給回饋（加分照樣跳；扣分只在老師畫面）
+  for (const sc of ['#beastGrid', '#pjGrid']) {
+    const el = document.querySelector(`${sc} [data-id="${op.id}"]`); if (!el) continue;
+    if (op.k === 'award') { cardFx(el, 'up', Object.values(beasts).find(b => b._id === op.id) || {}); float(el, `+${op.pts} ⏳`, '', '離線暫存'); }
+    else if (sc === '#beastGrid') float(el, `−${op.n} ⏳`, 'neg', '離線暫存');
+  }
+  renderClassBar();
+  if (!quiet) showToast('📴 網路斷了：已先記在這台裝置，連線後會自動補上', 'error');
+  return op.k === 'award' ? { delta: op.pts, queued: true } : { queued: true };
+}
+async function oqFlush() {
+  if (oqReplaying || !navigator.onLine || !cls || !me) return;
+  const mine = oqMine(); if (!mine.length) return;
+  oqReplaying = true; let ok = 0;
+  try {
+    for (const op of mine) {
+      const tag = `（離線補登 ${fmtTs(op.at).slice(-5)}）`;
+      try {
+        if (op.k === 'award') await award(op.id, op.pts, op.reason + tag, true);
+        else await penalize(op.id, op.kind, op.n, op.reason + tag, true);
+      } catch (e) { if (isNetErr(e)) break; console.error(e); }   // 其他錯誤（例如找不到靈獸）就丟掉這筆
+      oqSave(oqLoad().filter(x => !(x.at === op.at && x.id === op.id && x.k === op.k))); ok++;
+    }
+  } finally { oqReplaying = false; }
+  renderClassBar();
+  if (ok) showToast(`📶 已補上離線時的 ${ok} 筆加扣分`);
+}
+window.addEventListener('online', () => { renderClassBar(); setTimeout(oqFlush, 800); });
+window.addEventListener('offline', () => { renderClassBar(); showToast('📴 網路斷了：加扣分會先存在這台裝置', 'error'); });
+setInterval(oqFlush, 20000);
