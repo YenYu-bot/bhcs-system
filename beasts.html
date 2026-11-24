@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611241044">
-<link rel="stylesheet" href="css/beasts.css?v=202611241044">
+<link rel="stylesheet" href="css/app.css?v=202611241112">
+<link rel="stylesheet" href="css/beasts.css?v=202611241112">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -32,10 +32,16 @@
     <div><div class="brand-sub">百宏文教</div><div class="brand">百宏靈獸</div></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
       <span class="badge badge-teal" id="userBadge"></span>
-      <button class="btn btn-ghost btn-sm" onclick="openProjector()">🖥 投影</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportQRs()">🖨 匯出 QR</button>
-      <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="toggleTheme()" title="切換日間／夜間">☀️ 日間</button>
+      <button class="btn btn-teal btn-sm" onclick="openProjector()">🖥 上課畫面</button>
       <a class="btn btn-ghost btn-sm" href="index.html" style="text-decoration:none">📝 教室日誌</a>
+      <details class="hdr-menu"><summary class="btn btn-ghost btn-sm">⋯ 更多</summary>
+        <div class="menu-pop">
+          <button onclick="openReport();this.closest('details').open=false">💌 家長週報</button>
+          <button onclick="exportQRs();this.closest('details').open=false">🖨 匯出學生 QR</button>
+          <button id="themeBtn" onclick="toggleTheme()">🌙 夜間</button>
+          <button class="sfx-btn" onclick="toggleSfx()">🔊 音效</button>
+        </div>
+      </details>
       <button class="btn btn-ghost btn-sm" onclick="logout()">登出</button>
     </div>
   </div>
@@ -69,12 +75,17 @@
         <button class="btn btn-ghost btn-sm" onclick="selAll()">☑ 全選</button>
         <button class="btn btn-ghost btn-sm" onclick="openDraw()">🎲 抽籤</button>
         <button class="btn btn-ghost btn-sm" onclick="openBoard()">📋 聯絡簿</button>
-        <button class="btn btn-ghost btn-sm" onclick="openCountdown()">📅 倒數日</button>
-        <button class="btn btn-ghost btn-sm" onclick="redeemGift()">🎁 禮物碼</button>
+        <button class="btn btn-ghost btn-sm pc-only" onclick="openCountdown()">📅 倒數日</button>
+        <button class="btn btn-ghost btn-sm pc-only" onclick="redeemGift()">🎁 禮物碼</button>
+        <button class="btn btn-ghost btn-sm pc-only" id="seatBtn" onclick="toggleSeatEdit()">🪑 座位表</button>
+        <button class="btn btn-ghost btn-sm pc-only" onclick="openGroups()">👥 分組</button>
+        <span id="grpBtns" class="grp-btns"></span>
         <span class="gt-sp"></span>
         <span class="gt-hint">點靈獸可多選，再按下方加分／扣分</span>
-        <label class="gt-hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="fitToggle" onchange="setFit(this.checked)" style="width:auto"> 全班縮到一頁</label>
+        <button class="btn btn-ghost btn-sm" id="viewBtn" onclick="toggleView()">☰ 名單</button>
+        <label class="gt-hint pc-only" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="fitToggle" onchange="setFit(this.checked)" style="width:auto"> 全班縮到一頁</label>
       </div>
+      <div class="seat-bar" id="seatBar" style="display:none"></div>
       <div class="beast-grid" id="beastGrid"><div class="empty">請先選擇班級</div></div>
     </div>
 
@@ -130,7 +141,7 @@
         </div>
         <div class="st-flash" id="stFlash"></div>
       </div>
-      <div class="st-timers" id="stTimers"></div>
+      <div id="stTimersHome"><div class="st-timers" id="stTimers"></div></div>
       </div>
       <details class="card st-settings-card">
         <summary>⚙️ 管家設定</summary>
@@ -232,6 +243,42 @@
   </div>
 </div>
 
+<!-- ───────── 分組 ───────── -->
+<div class="tool-ov" id="grpOv" onclick="if(event.target===this)closeTool('grpOv')">
+  <div class="tool-card" style="width:min(560px,100%)">
+    <button class="btn btn-ghost btn-sm tool-x" onclick="closeTool('grpOv')">✕</button>
+    <h2>👥 分組</h2>
+    <div class="hint" style="margin:0 0 8px">幫每位學生選組別（— 是不分組）。分好後課堂頁會出現「第 N 組」按鈕，一鍵選整組加分。</div>
+    <div id="grpList"></div>
+  </div>
+</div>
+
+<!-- ───────── 護山大陣 ───────── -->
+<div class="tool-ov" id="fmOv" onclick="if(event.target===this)closeTool('fmOv')">
+  <div class="tool-card" style="width:min(520px,100%)">
+    <button class="btn btn-ghost btn-sm tool-x" onclick="closeTool('fmOv')">✕</button>
+    <h2>🛡 護山大陣</h2>
+    <div class="hint" id="fmInfo" style="margin:0 0 12px"></div>
+    <div class="cd-form" style="flex-direction:column;align-items:stretch">
+      <label class="field-label">本週目標（全班加起來的靈氣）</label><input class="field-input" id="fmGoal" type="number" min="0">
+      <label class="field-label">啟動後的全班獎勵</label><input class="field-input" id="fmReward" placeholder="例：最後 10 分鐘玩桌遊、下週免一次小考">
+      <button class="btn btn-teal" onclick="saveFormation()">💾 儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── 家長週報 ───────── -->
+<div class="tool-ov" id="repOv" onclick="if(event.target===this)closeTool('repOv')">
+  <div class="tool-card" style="width:min(760px,100%)">
+    <button class="btn btn-ghost btn-sm tool-x" onclick="closeTool('repOv')">✕</button>
+    <h2>💌 家長週報</h2>
+    <div class="hint" style="margin:0 0 10px">每位學生本週的靈獸小報，補上「老師的話」後複製貼到 LINE 給家長。只寫加分和進度，不寫扣分。</div>
+    <div class="tool-row" style="justify-content:flex-start;margin:0 0 10px"><button class="btn btn-ghost btn-sm" onclick="copyRepAll()">📋 全部複製</button></div>
+    <div id="repList"></div>
+  </div>
+</div>
+<div class="big-banner" id="bigBanner"></div>
+
 <!-- ───────── 學生面板 ───────── -->
 <div class="modal-overlay" id="studentModal" onclick="if(event.target===this)closeStudent()">
   <div class="modal modal-wide">
@@ -282,26 +329,38 @@
   </div>
 </div>
 
-<!-- ───────── 投影模式 ───────── -->
+<!-- ───────── 上課畫面（投影） ───────── -->
 <div id="projector" class="projector" style="display:none">
   <div class="pj-head">
     <div class="pj-title" id="pjTitle"></div>
+    <div class="pj-formation" id="pjFormation"></div>
     <div class="pj-goal" id="pjGoal"></div>
-    <div class="pj-timers" id="pjTimers"></div>
-    <div class="pj-steward" id="pjSteward" style="display:none"></div>
     <div class="pj-count" id="pjCount"></div>
     <div class="pj-clock" id="pjClock"></div>
     <div class="pj-ctl">
       <button class="btn btn-ghost btn-sm" onclick="openDraw()">🎲 抽籤</button>
       <button class="btn btn-ghost btn-sm" onclick="openBoard()">📋 聯絡簿</button>
+      <button class="btn btn-ghost btn-sm sfx-btn" onclick="toggleSfx()">🔊 音效</button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleRail()">⇥ 側欄</button>
       <button class="btn btn-ghost btn-sm" onclick="closeProjector()">✕ 離開</button>
     </div>
   </div>
-  <div class="pj-grid" id="pjGrid"></div>
+  <div class="pj-body">
+    <div class="pj-main">
+      <div class="pj-front" id="pjFront" style="display:none">▲ 講台・白板</div>
+      <div class="pj-grid" id="pjGrid"></div>
+    </div>
+    <div class="pj-rail" id="pjRail">
+      <div class="rail-sec" id="railSteward"></div>
+      <div class="rail-sec"><div class="rail-t">⏰ 計時器</div><div id="railTimers"></div></div>
+      <div class="rail-sec" id="railStars"></div>
+      <div class="pj-steward" id="pjSteward" style="display:none"></div>
+    </div>
+  </div>
   <div class="pj-banner" id="pjBanner"></div>
   <div class="pj-spot" id="pjSpot"><div class="sp-card" id="pjSpotCard"></div></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611241044"></script>
+<script type="module" src="js/beasts.js?v=202611241112"></script>
 </body>
 </html>
