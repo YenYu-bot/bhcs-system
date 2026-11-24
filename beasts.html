@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>百宏文教 · 百宏靈獸</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=202611021345">
-<link rel="stylesheet" href="css/beasts.css?v=202611021345">
+<link rel="stylesheet" href="css/app.css?v=202611241044">
+<link rel="stylesheet" href="css/beasts.css?v=202611241044">
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">處理中...</div></div>
@@ -34,6 +34,7 @@
       <span class="badge badge-teal" id="userBadge"></span>
       <button class="btn btn-ghost btn-sm" onclick="openProjector()">🖥 投影</button>
       <button class="btn btn-ghost btn-sm" onclick="exportQRs()">🖨 匯出 QR</button>
+      <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="toggleTheme()" title="切換日間／夜間">☀️ 日間</button>
       <a class="btn btn-ghost btn-sm" href="index.html" style="text-decoration:none">📝 教室日誌</a>
       <button class="btn btn-ghost btn-sm" onclick="logout()">登出</button>
     </div>
@@ -63,6 +64,16 @@
           <button class="btn btn-teal btn-sm" id="goalBtn" onclick="awardGoal()">✅ 達成，每人 +<span id="goalPts">2</span></button>
         </div>
         <div class="goal-note" id="goalNote"></div>
+      </div>
+      <div class="grid-tools" id="gridTools" style="display:none">
+        <button class="btn btn-ghost btn-sm" onclick="selAll()">☑ 全選</button>
+        <button class="btn btn-ghost btn-sm" onclick="openDraw()">🎲 抽籤</button>
+        <button class="btn btn-ghost btn-sm" onclick="openBoard()">📋 聯絡簿</button>
+        <button class="btn btn-ghost btn-sm" onclick="openCountdown()">📅 倒數日</button>
+        <button class="btn btn-ghost btn-sm" onclick="redeemGift()">🎁 禮物碼</button>
+        <span class="gt-sp"></span>
+        <span class="gt-hint">點靈獸可多選，再按下方加分／扣分</span>
+        <label class="gt-hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="fitToggle" onchange="setFit(this.checked)" style="width:auto"> 全班縮到一頁</label>
       </div>
       <div class="beast-grid" id="beastGrid"><div class="empty">請先選擇班級</div></div>
     </div>
@@ -150,6 +161,7 @@
         <div class="hint">課程倍率：第 1 門 <input class="mini" id="mult0" type="number" step="0.1">，第 2 門 <input class="mini" id="mult1" type="number" step="0.1">，第 3 門以上 <input class="mini" id="mult2" type="number" step="0.1"></div></div>
       <div class="card"><div class="card-title">道具價格（靈石）</div><div id="cfgShop"></div></div>
       <div class="card"><div class="card-title">現實獎勵（老師兌換；價格由主管核定）</div><div id="cfgReal"></div><button class="btn btn-ghost btn-sm" onclick="cfgAddRow('realReward')">＋ 新增</button></div>
+      <div class="card"><div class="card-title">🎁 禮物碼（節慶活動用）</div><div class="hint" style="margin:0 0 8px">老師在課堂按「🎁 禮物碼」輸入後，全班每人得到靈石（仍受個人每週與持有上限，不佔班級週額度）。每班每個碼只能用一次，過了期限失效；每個碼最多發「單一任務最多靈石」那麼多。</div><div id="cfgGifts"></div><button class="btn btn-ghost btn-sm" onclick="cfgAddGift()">＋ 新增</button></div>
       <div class="card"><div class="card-title">管家預設</div><div class="cfg-grid" id="cfgSteward"></div></div>
       <div class="card"><div class="card-title">境界門檻（累計靈氣）</div><div class="cfg-grid" id="cfgRealms"></div><div class="hint">改門檻後現有靈獸的境界會在下次加分時重算；★ 為試煉境界，不可改。</div></div>
       <div style="display:flex;gap:10px;margin:8px 0 24px"><button class="btn btn-teal" onclick="saveConfig()">💾 儲存設定</button><button class="btn btn-ghost" onclick="resetConfig()">還原預設</button></div>
@@ -170,6 +182,53 @@
 
     <!-- 名人堂 -->
     <div id="tab-hall" style="display:none"><div class="card"><div class="card-title">名人堂 · 大羅金仙</div><div class="beast-grid" id="hallGrid"></div></div></div>
+  </div>
+</div>
+
+<!-- ───────── 加扣分動作列（點選靈獸後出現） ───────── -->
+<div class="act-bar" id="actBar"></div>
+
+<!-- ───────── 抽籤 ───────── -->
+<div class="tool-ov" id="drawOv" onclick="if(event.target===this)closeTool('drawOv')">
+  <div class="tool-card">
+    <button class="btn btn-ghost btn-sm tool-x" onclick="closeTool('drawOv')">✕</button>
+    <h2>🎲 抽籤</h2>
+    <div class="draw-stage" id="drawStage"><div class="dr-egg">🎲</div><div class="dr-name">準備好了嗎？</div><div class="dr-sub" id="drawLeft"></div></div>
+    <div class="tool-row">
+      <button class="btn st-btn-main" id="drawBtn" onclick="doDraw()">🎲 抽！</button>
+      <button class="btn btn-teal" id="drawAward" onclick="drawAward()" style="display:none">✅ 答對 +1</button>
+      <label><input type="checkbox" id="drawNoRepeat" checked style="width:auto"> 抽過的不再抽</label>
+      <button class="btn btn-ghost btn-sm" onclick="drawResetPool()">重新開始</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── 聯絡簿（大螢幕抄寫） ───────── -->
+<div class="tool-ov" id="boardOv" onclick="if(event.target===this)closeTool('boardOv')">
+  <div class="tool-card board">
+    <button class="btn btn-ghost btn-sm tool-x" onclick="closeTool('boardOv')">✕</button>
+    <h2>📋 聯絡簿</h2>
+    <div class="board-date" id="boardDate"></div>
+    <div class="board-text" id="boardText"></div>
+    <div id="boardEditWrap" style="display:none"><textarea class="field-input" id="boardEdit" placeholder="一行一項，例：&#10;1. 數學習作 p.32-33&#10;2. 明天考英文 L5 單字"></textarea></div>
+    <div class="tool-row">
+      <button class="btn btn-ghost btn-sm" id="boardEditBtn" onclick="boardEditToggle()">✎ 編輯</button>
+      <button class="btn btn-ghost btn-sm" onclick="boardFromJournal()">📝 帶入今天的教室日誌</button>
+      <button class="btn btn-ghost btn-sm" onclick="boardFont(-4)">A−</button>
+      <button class="btn btn-ghost btn-sm" onclick="boardFont(4)">A＋</button>
+      <button class="btn btn-ghost btn-sm" id="boardVertBtn" onclick="boardVert()">直書</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── 倒數日 ───────── -->
+<div class="tool-ov" id="cdOv" onclick="if(event.target===this)closeTool('cdOv')">
+  <div class="tool-card" style="width:min(520px,100%)">
+    <button class="btn btn-ghost btn-sm tool-x" onclick="closeTool('cdOv')">✕</button>
+    <h2>📅 倒數日</h2>
+    <div class="hint" style="margin:0 0 8px">段考、會考、活動日…會顯示在班級列和投影畫面上；日期過了自動消失。</div>
+    <div class="cd-list" id="cdList"></div>
+    <div class="cd-form"><input class="field-input" id="cdLabel" placeholder="名稱，例：第二次段考"><input class="field-input" id="cdDate" type="date" style="flex:none;width:170px"><button class="btn btn-teal" onclick="addCountdown()">＋ 加入</button></div>
   </div>
 </div>
 
@@ -230,12 +289,19 @@
     <div class="pj-goal" id="pjGoal"></div>
     <div class="pj-timers" id="pjTimers"></div>
     <div class="pj-steward" id="pjSteward" style="display:none"></div>
-    <button class="btn btn-ghost btn-sm" onclick="closeProjector()">✕ 離開</button>
+    <div class="pj-count" id="pjCount"></div>
+    <div class="pj-clock" id="pjClock"></div>
+    <div class="pj-ctl">
+      <button class="btn btn-ghost btn-sm" onclick="openDraw()">🎲 抽籤</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBoard()">📋 聯絡簿</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeProjector()">✕ 離開</button>
+    </div>
   </div>
   <div class="pj-grid" id="pjGrid"></div>
   <div class="pj-banner" id="pjBanner"></div>
+  <div class="pj-spot" id="pjSpot"><div class="sp-card" id="pjSpotCard"></div></div>
 </div>
 
-<script type="module" src="js/beasts.js?v=202611021345"></script>
+<script type="module" src="js/beasts.js?v=202611241044"></script>
 </body>
 </html>
